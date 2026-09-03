@@ -73,7 +73,7 @@ jobs:
             const issues=[];
             if (document.documentElement.scrollWidth > vw + 1) issues.push({type:'page-horizontal-overflow', scrollWidth:document.documentElement.scrollWidth, viewport:vw});
 
-            document.querySelectorAll('button,input,select,textarea').forEach((el,i)=>{
+            document.querySelectorAll('button,input,select,textarea').forEach(el=>{
               if(!visible(el)) return;
               const r=el.getBoundingClientRect();
               if((r.left < -1 || r.right > vw + 1) && !scrollXAncestor(el) && !el.closest('.canvas-viewport')) {
@@ -87,6 +87,13 @@ jobs:
 
             document.querySelectorAll('.card,.canvas-view,.chart-wrap svg,.graph-wrap svg').forEach(el=>{
               if(visible(el)) { const r=el.getBoundingClientRect(); if(r.width < 2 || r.height < 2) issues.push({type:'zero-size', cls:el.className?.baseVal||el.className, rect:rect(el)}); }
+            });
+
+            document.querySelectorAll('circle.point').forEach(el=>{
+              for (const attr of ['cx','cy']) {
+                const v=Number(el.getAttribute(attr));
+                if(!Number.isFinite(v)) issues.push({type:'nonfinite-chart-coordinate', attr, value:el.getAttribute(attr)});
+              }
             });
 
             document.querySelectorAll('.canvas-view').forEach(el=>{
@@ -114,15 +121,15 @@ jobs:
             if(toolbar && toolbarBorder==='0px') issues.push({type:'missing-canvas-toolbar-border'});
             if(viewHead && viewHeadBorder==='0px') issues.push({type:'missing-canvas-view-head-border'});
 
-            const signals=[...document.querySelectorAll('.card-title')].find(e=>e.textContent==='Investigation signals')?.closest('.card')?.querySelector('.card-body > div');
+            const signals=[...document.querySelectorAll('.card-title')].find(e=>e.textContent==='Investigation signals')?.closest('.card')?.querySelector('.signals-grid');
             const sigCols=signals?getComputedStyle(signals).gridTemplateColumns:null;
-            if(vw <= 470 && signals && sigCols && sigCols.split(' ').length >= 3) issues.push({type:'mobile-signals-too-many-columns', gridTemplateColumns:sigCols, width:signals.getBoundingClientRect().width});
+            if(vw <= 470 && signals && sigCols && sigCols.split(' ').length >= 2) issues.push({type:'mobile-signals-too-many-columns', gridTemplateColumns:sigCols, width:signals.getBoundingClientRect().width});
 
             const evidenceSearch=document.querySelector('#evidence-search');
             if(vw <= 470 && evidenceSearch) {
               const r=evidenceSearch.getBoundingClientRect();
               const parent=evidenceSearch.parentElement.getBoundingClientRect();
-              if(r.width > parent.width*.75 || r.left < parent.left || r.right > parent.right) issues.push({type:'mobile-evidence-header-cramped', search:rect(evidenceSearch), parent:{left:parent.left,right:parent.right,width:parent.width}});
+              if(r.left < parent.left-1 || r.right > parent.right+1 || r.width < parent.width*.8) issues.push({type:'mobile-evidence-header-cramped', search:rect(evidenceSearch), parent:{left:parent.left,right:parent.right,width:parent.width}});
             }
 
             return {
@@ -144,7 +151,6 @@ jobs:
                 page.locator(f'[data-tab="{tab}"]').click()
                 page.wait_for_timeout(100)
                 if tab == 'evidence':
-                  # Exercise both rich image and map layouts.
                   for doc_id, suffix in [('media-checkout-capture','image'),('media-checkout-map','map')]:
                     loc=page.locator(f'[data-doc-id="{doc_id}"]')
                     if loc.count():
@@ -159,11 +165,13 @@ jobs:
               page.close()
             browser.close()
 
-          print(json.dumps(reports, indent=2))
           Path('/tmp/layout-audit.json').write_text(json.dumps(reports, indent=2))
           severe=[(r['viewport'],r['tab'],i) for r in reports for i in r['issues']]
           print(f'VISUAL_AUDIT_ISSUES={len(severe)}')
           for v,t,i in severe: print(f'ISSUE {v}/{t}: {json.dumps(i, sort_keys=True)}')
+          if severe:
+              raise SystemExit(1)
+          print('Visual audit passed with zero detected layout defects.')
           PY
           python /tmp/layout_audit.py
 
@@ -177,3 +185,5 @@ jobs:
             /tmp/visual-audit/*.png
           if-no-files-found: error
           retention-days: 30
+
+# rerun against patched visual branch
