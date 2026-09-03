@@ -1,80 +1,355 @@
-const $ = (s, root=document) => root.querySelector(s);
-const $$ = (s, root=document) => [...root.querySelectorAll(s)];
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
-const fmt=n=>Number.isFinite(+n)?(+n).toFixed(Math.abs(+n)>=100?1:2):String(n??'');
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function rng(seed){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-function uid(p='id'){return `${p}-${Math.random().toString(36).slice(2,8)}`}
+import { InvestigationStore } from './store.js';
+import {
+  escapeHtml,
+  extent,
+  filterRecords,
+  formatNumber,
+  groupCounts,
+  inferDataset,
+  mean,
+  parseCsv,
+  rankCorrelations,
+  findOutliers,
+  rankDiscriminatingFeatures,
+  safeNumber
+} from './core.js';
+import { SAMPLE_DATASETS } from './sampleData.js';
+import { createWebMcpTools, registerWebMcp } from './webmcp.js';
+import { renderSpatialCanvas, bindSpatialCanvasEvents, renderEvidenceMedia } from './workspace.js';
+// POST_ZIP_ENHANCEMENTS_V2: app
 
-function buildCheckout(){const r=rng(17),rows=[];const browsers=['Chrome 149','Safari 20.1','Safari 20.2','Firefox 142','Edge 149'],regions=['NA','EU','APAC','LATAM'];for(let i=0;i<720;i++){const day=Math.floor(i/24),hour=i%24,platform=r()<.58?'mobile':'desktop',browser=platform==='mobile'&&r()<.55?(r()<.62?'Safari 20.2':'Safari 20.1'):browsers[Math.floor(r()*browsers.length)];const region=regions[Math.floor(r()*regions.length)],after=day>=5,badSafari=after&&platform==='mobile'&&browser==='Safari 20.2',cohort=after&&r()<.17;let conversion=.082+(r()-.5)*.025-(badSafari?.045:0)-(cohort?.03:0),error=.008+r()*.008+(badSafari?.052:0),latency=185+r()*130+(badSafari?380:0)+(cohort?80:0);rows.push({id:`req-${String(i+1).padStart(4,'0')}`,timestamp:new Date(Date.UTC(2026,7,24+day,hour)).toISOString(),platform,browser,region,experiment:cohort?'pricing-v3':'control',conversion:clamp(conversion,0,.15)*100,latency,errorRate:error*100,checkoutAbandonment:clamp(.22+(badSafari?.21:0)+(cohort?.14:0)+(r()-.5)*.05,0,1)*100,severity:badSafari?'high':cohort?'medium':'normal'})}return {id:'checkout',title:'Checkout conversion regression',description:'Investigate a sudden conversion decline across browser, platform, experiment, region, telemetry, support evidence, and release history.',rows,x:'latency',y:'conversion',metrics:['conversion','latency','errorRate','checkoutAbandonment'],dimensions:['platform','browser','region','experiment'],hypotheses:[{id:'h-safari',title:'Safari 20.2 regression broke mobile checkout',confidence:.78,status:'active',support:['ev-release','ev-support'],against:['ev-desktop'],falsify:'Find failing non-Safari traffic after the regression boundary.'},{id:'h-price',title:'Pricing experiment independently reduced conversion',confidence:.43,status:'active',support:['ev-exp'],against:['ev-release'],falsify:'Compare the experiment cohort against control within the same browser/platform.'}],evidence:[{id:'ev-release',type:'document',title:'Checkout SDK release 4.7.2',trust:'internal',body:'Release 4.7.2 changed payment-sheet focus handling on mobile WebKit. Rollout reached 100% on August 29.'},{id:'ev-support',type:'log',title:'Support incident excerpts',trust:'untrusted',body:'Customers report the pay button sometimes becoming unresponsive after returning from the card verification sheet.',lines:['11:42 iOS Safari: pay button stuck','11:47 retry succeeds after refresh','12:03 Android Chrome unaffected']},{id:'ev-exp',type:'document',title:'Pricing experiment v3',trust:'internal',body:'Pricing-v3 introduces a higher annual anchor and is active for 17% of checkout sessions beginning August 29.'},{id:'ev-desktop',type:'image',title:'Desktop checkout capture',trust:'untrusted',body:'Captured session showing a desktop failure in the pricing-v3 cohort despite no Safari regression.'},{id:'ev-map',type:'map',title:'Failure geography',trust:'internal',body:'High-error Safari sessions are globally distributed rather than isolated to one region.'}],graph:{nodes:['Checkout','Payment Sheet','Safari 20.2','pricing-v3','Support','Release 4.7.2','Customers'],edges:[['Checkout','Payment Sheet','calls'],['Payment Sheet','Safari 20.2','affected by'],['Release 4.7.2','Payment Sheet','changed'],['Support','Customers','reports'],['pricing-v3','Checkout','changes']]}}}
-function buildML(){const r=rng(41),rows=[];for(let i=0;i<480;i++){const day=Math.floor(i/24),dataset=day>=9?'v7':'v6',augment=r()<.5?'light':'heavy',arch=r()<.55?'vit-b':'convnext',crop=dataset==='v7'?(r()<.28?'tight':'standard'):'standard';let acc=.842+(r()-.5)*.025-(dataset==='v7'?.037:0)-(crop==='tight'?.034:0)+(arch==='vit-b'?.008:0);rows.push({id:`run-${String(i+1).padStart(4,'0')}`,timestamp:new Date(Date.UTC(2026,7,5+day,i%24)).toISOString(),dataset,augment,arch,crop,accuracy:acc*100,loss:.62+(1-acc)*2+r()*.12,stepTime:310+r()*90+(augment==='heavy'?45:0),gpuMemory:18+r()*7+(arch==='vit-b'?4:0),severity:dataset==='v7'&&crop==='tight'?'high':dataset==='v7'?'medium':'normal'})}return {id:'ml',title:'ML model quality regression',description:'Investigate an accuracy regression across runs, dataset lineage, preprocessing, architecture, sample evidence, and experiment logs.',rows,x:'loss',y:'accuracy',metrics:['accuracy','loss','stepTime','gpuMemory'],dimensions:['dataset','augment','arch','crop'],hypotheses:[{id:'h-data',title:'Dataset v7 preprocessing caused the regression',confidence:.82,status:'active',support:['ml-lineage','ml-frame'],against:['ml-outlier'],falsify:'Find v7 standard-crop runs that match v6 accuracy.'},{id:'h-arch',title:'Architecture change explains the loss',confidence:.22,status:'active',support:[],against:['ml-lineage'],falsify:'Control for dataset and crop while comparing architectures.'}],evidence:[{id:'ml-lineage',type:'document',title:'Dataset lineage note',trust:'internal',body:'Dataset v7 switched the default object cropper from padded bounding boxes to tighter boxes.'},{id:'ml-frame',type:'image',title:'Misclassified sample montage',trust:'untrusted',body:'Selected failures frequently truncate the target object near image boundaries.'},{id:'ml-log',type:'log',title:'Training logs',trust:'internal',body:'Training remains numerically stable.',lines:['step 4000 loss=0.71','step 8000 loss=0.66','no NaNs observed']},{id:'ml-map',type:'map',title:'Capture regions',trust:'internal',body:'The v7 failure increase occurs across all capture regions.'},{id:'ml-outlier',type:'document',title:'High-performing v7 outlier',trust:'internal',body:'Runs that explicitly restore standard crop recover most of the lost accuracy.'}],graph:{nodes:['Dataset v6','Dataset v7','Cropper','Training Runs','Validation','Misclassified Samples'],edges:[['Dataset v7','Cropper','configured'],['Cropper','Training Runs','feeds'],['Training Runs','Validation','evaluated on'],['Validation','Misclassified Samples','produces']]}}}
-function buildFraud(){const r=rng(99),merchants=['Vertex Services','Northstar Digital','Lumen Market','Elm Goods','Harbor Retail'],rows=[];for(let i=0;i<560;i++){const merchant=merchants[Math.floor(r()*merchants.length)],cluster=(merchant==='Vertex Services'||merchant==='Northstar Digital')&&r()<.36,amount=30+r()*720+(cluster?240:0),velocity=1+r()*5+(cluster?8:0),risk=25+r()*45+(cluster?24:0);rows.push({id:`txn-${String(i+1).padStart(4,'0')}`,timestamp:new Date(Date.UTC(2026,7,17+Math.floor(i/48),i%24)).toISOString(),merchant,region:['US','UK','IN','SG'][Math.floor(r()*4)],device:cluster?'shared-fingerprint':`fp-${Math.floor(r()*120)}`,amount,velocity,riskScore:clamp(risk,0,100),chargebackProbability:clamp(risk*.72+(r()-.5)*15,0,100),severity:cluster?'high':risk>70?'medium':'normal'})}return {id:'fraud',title:'Suspicious transaction network',description:'Find coordinated payment behavior across merchants, device fingerprints, velocity, locations, transaction evidence, and relationship structure.',rows,x:'amount',y:'riskScore',metrics:['amount','velocity','riskScore','chargebackProbability'],dimensions:['merchant','region','device'],hypotheses:[{id:'h-ring',title:'Vertex and Northstar share a coordinated fraud ring',confidence:.71,status:'active',support:['fr-log','fr-map'],against:['fr-merchant'],falsify:'Test whether shared fingerprints remain enriched after controlling for transaction velocity.'}],evidence:[{id:'fr-log',type:'log',title:'Gateway correlation log',trust:'internal',body:'Multiple accounts reuse a small fingerprint set.',lines:['fp shared-fingerprint -> 38 accounts','median inter-purchase delay 43s','merchant overlap Vertex/Northstar']},{id:'fr-map',type:'map',title:'Transaction geography',trust:'internal',body:'Transactions jump between distant regions within implausibly short intervals.'},{id:'fr-shot',type:'image',title:'Merchant checkout capture',trust:'untrusted',body:'Archived merchant page used by one affected account.'},{id:'fr-merchant',type:'document',title:'Merchant dispute response',trust:'untrusted',body:'Vertex disputes that it is related to Northstar and attributes shared devices to a marketing affiliate.'}],graph:{nodes:['Vertex Services','Northstar Digital','shared-fingerprint','Accounts','Chargebacks','Lumen Market','Harbor Retail'],edges:[['Vertex Services','shared-fingerprint','uses'],['Northstar Digital','shared-fingerprint','uses'],['shared-fingerprint','Accounts','links'],['Accounts','Chargebacks','produces']]}}}
-const scenarios=[buildCheckout(),buildML(),buildFraud()];
-const persisted=(()=>{try{return JSON.parse(localStorage.getItem('investigation-canvas-state')||'null')}catch{return null}})();
-const state={scenarioId:persisted?.scenarioId||'checkout',tab:persisted?.tab||'Explore',selected:new Set(persisted?.selected||[]),search:'',filters:[],activity:[{id:uid('a'),actor:'system',action:'Opened investigation workspace',at:Date.now()}],annotations:[],findings:[],branches:[],savedViews:[],canvasZoom:1,history:[],future:[]};
-function scenario(){return scenarios.find(s=>s.id===state.scenarioId)||scenarios[0]}
-function persist(){localStorage.setItem('investigation-canvas-state',JSON.stringify({scenarioId:state.scenarioId,tab:state.tab,selected:[...state.selected]}))}
-function snapshot(){return {scenarioId:state.scenarioId,tab:state.tab,selected:[...state.selected],search:state.search,filters:structuredClone(state.filters),annotations:structuredClone(state.annotations),findings:structuredClone(state.findings)}}
-function restore(s){Object.assign(state,{scenarioId:s.scenarioId,tab:s.tab,selected:new Set(s.selected||[]),search:s.search||'',filters:s.filters||[],annotations:s.annotations||[],findings:s.findings||[]});persist();render()}
-function checkpoint(){state.history.push(snapshot());if(state.history.length>40)state.history.shift();state.future=[]}
-function mutate(action,fn,actor='human'){checkpoint();fn();state.activity.unshift({id:uid('a'),actor,action,at:Date.now()});persist();render()}
-function visibleRows(){let rows=scenario().rows;if(state.search){const q=state.search.toLowerCase();rows=rows.filter(r=>Object.values(r).some(v=>String(v).toLowerCase().includes(q)))}for(const f of state.filters){rows=rows.filter(r=>{const v=r[f.field],x=f.value;return f.op==='>'?+v>+x:f.op==='<'?+v<+x:f.op==='contains'?String(v).toLowerCase().includes(String(x).toLowerCase()):String(v)===String(x)})}return rows}
-function avg(rows,k){return rows.length?rows.reduce((a,r)=>a+(+r[k]||0),0)/rows.length:0}
-function pearson(rows,a,b){if(rows.length<3)return 0;const A=avg(rows,a),B=avg(rows,b);let n=0,da=0,db=0;for(const r of rows){const x=(+r[a]||0)-A,y=(+r[b]||0)-B;n+=x*y;da+=x*x;db+=y*y}return da&&db?n/Math.sqrt(da*db):0}
-function selectedRows(){const set=state.selected;return scenario().rows.filter(r=>set.has(r.id))}
-function discriminator(){const s=selectedRows(),all=visibleRows();if(!s.length)return [];const out=[];for(const d of scenario().dimensions){const count=Object.create(null);for(const r of s)count[r[d]]=(count[r[d]]||0)+1;const [value,n]=Object.entries(count).sort((a,b)=>b[1]-a[1])[0]||[];if(value)out.push({label:`${d}: ${value}`,score:n/s.length,detail:`${n}/${s.length} selected`})}for(const m of scenario().metrics.slice(0,2)){const delta=avg(s,m)-avg(all,m);out.push({label:m,score:Math.min(1,Math.abs(delta)/(Math.abs(avg(all,m))||1)),detail:`Δ ${fmt(delta)}`})}return out.sort((a,b)=>b.score-a.score).slice(0,3)}
-function correlations(){const rows=visibleRows(),y=scenario().y;return scenario().metrics.filter(m=>m!==y).map(m=>({m,r:pearson(rows,m,y)})).sort((a,b)=>Math.abs(b.r)-Math.abs(a.r)).slice(0,3)}
-function concentrations(){const rows=visibleRows(),d=scenario().dimensions[0],c={};for(const r of rows)c[r[d]]=(c[r[d]]||0)+1;return Object.entries(c).sort((a,b)=>b[1]-a[1]).slice(0,4)}
-function outliers(){const rows=visibleRows(),m=scenario().y,mu=avg(rows,m),sd=Math.sqrt(avg(rows,m)-avg(rows,m)+rows.reduce((a,r)=>a+(r[m]-mu)**2,0)/(rows.length||1));return [...rows].sort((a,b)=>Math.abs(b[m]-mu)-Math.abs(a[m]-mu)).slice(0,3).map(r=>({id:r.id,v:r[m],z:sd?(r[m]-mu)/sd:0}))}
-function metricLabel(k){return k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase())}
-function scatterSVG(rows){const s=scenario(),W=720,H=250,p=28,xv=rows.map(r=>+r[s.x]),yv=rows.map(r=>+r[s.y]),xmin=Math.min(...xv),xmax=Math.max(...xv),ymin=Math.min(...yv),ymax=Math.max(...yv),sx=x=>p+(x-xmin)/(xmax-xmin||1)*(W-p*2),sy=y=>H-p-(y-ymin)/(ymax-ymin||1)*(H-p*2);return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Linked scatter plot"><line class="axis" x1="${p}" y1="${H-p}" x2="${W-p}" y2="${H-p}"/><line class="axis" x1="${p}" y1="${p}" x2="${p}" y2="${H-p}"/>${rows.slice(0,260).map(r=>`<circle data-id="${r.id}" class="point ${state.selected.has(r.id)?'selected':''} ${r.severity==='high'?'alert':''}" cx="${sx(r[s.x]).toFixed(1)}" cy="${sy(r[s.y]).toFixed(1)}" r="${state.selected.has(r.id)?4.5:3}"/>`).join('')}<text x="${W/2}" y="246" text-anchor="middle" fill="#8292a6" font-size="10">${metricLabel(s.x)}</text><text x="8" y="14" fill="#8292a6" font-size="10">${metricLabel(s.y)}</text></svg>`}
-function timelineSVG(rows){const s=scenario(),W=520,H=250,p=28,ordered=[...rows].sort((a,b)=>a.timestamp.localeCompare(b.timestamp)),vals=ordered.map(r=>+r[s.y]),mn=Math.min(...vals),mx=Math.max(...vals),sx=i=>p+i/(ordered.length-1||1)*(W-p*2),sy=v=>H-p-(v-mn)/(mx-mn||1)*(H-p*2);return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Timeline"><line class="axis" x1="${p}" y1="${H-p}" x2="${W-p}" y2="${H-p}"/>${ordered.filter((_,i)=>i%Math.max(1,Math.floor(ordered.length/160))===0).map((r,i)=>`<circle class="timeline-dot ${r.severity==='high'?'alert':''}" cx="${sx(i)}" cy="${sy(r[s.y])}" r="2.5"/>`).join('')}</svg>`}
-function graphSVG(){const g=scenario().graph,W=620,H=310,cx=W/2,cy=H/2,R=110,pos={};g.nodes.forEach((n,i)=>pos[n]=[cx+Math.cos(i/g.nodes.length*Math.PI*2)*R*1.7,cy+Math.sin(i/g.nodes.length*Math.PI*2)*R]);return `<svg viewBox="0 0 ${W} ${H}">${g.edges.map(([a,b])=>`<line class="edge" x1="${pos[a][0]}" y1="${pos[a][1]}" x2="${pos[b][0]}" y2="${pos[b][1]}"/>`).join('')}${g.nodes.map(n=>`<g><circle class="node ${/Safari|shared|v7/.test(n)?'hot':''}" cx="${pos[n][0]}" cy="${pos[n][1]}" r="24"/><text class="node-label" x="${pos[n][0]}" y="${pos[n][1]+37}">${esc(n)}</text></g>`).join('')}</svg>`}
-function evidenceVisual(e){if(e.type==='log')return `<div class="logbox">${(e.lines||[]).map(x=>esc(x)).join('<br>')}</div>`;if(e.type==='map')return '<div class="mapbox"></div>';if(e.type==='image')return '<div class="thumbbox"></div>';return ''}
-function evidenceCard(e){return `<article class="card evidence-item"><span class="evidence-type">${esc(e.type)}</span>${e.trust==='untrusted'?'<span class="untrusted">untrusted source</span>':''}<h3>${esc(e.title)}</h3><p>${esc(e.body)}</p>${evidenceVisual(e)}<button data-focus-evidence="${e.id}">Pin evidence</button></article>`}
-function topbar(){return `<header class="topbar"><div class="brand"><div class="logo">IC</div><div class="brand-copy"><div class="brand-title">Investigation Canvas</div><div class="brand-subtitle">Shared visual reasoning for humans + browser agents</div></div></div><nav class="tabs">${['Explore','Hypotheses','Evidence','Canvas','Provenance'].map(t=>`<button class="tab ${state.tab===t?'active':''}" data-tab="${t}">${t}</button>`).join('')}</nav><div class="actions"><button data-action="undo">Undo</button><button data-action="redo">Redo</button><button data-action="import">Import</button><button data-action="export">Export</button></div></header>`}
-function head(){const s=scenario(),rows=visibleRows();return `<section class="workspace-head"><div class="scenario-row"><div><h1 class="scenario-title">${esc(s.title)}</h1><div class="scenario-desc">${esc(s.description)}</div></div><select id="scenario-select" aria-label="Investigation scenario">${scenarios.map(x=>`<option value="${x.id}" ${x.id===s.id?'selected':''}>${esc(x.title)}</option>`).join('')}</select></div><div class="statusbar"><span class="pill"><strong>${rows.length}</strong> visible</span><span class="pill"><strong>${state.selected.size}</strong> selected</span><span class="pill"><strong>${s.hypotheses.filter(h=>h.status==='active').length}</strong> live hypotheses</span><span class="pill"><strong>${s.evidence.filter(e=>e.trust==='untrusted').length}</strong> untrusted sources</span><span class="pill"><strong>${state.findings.length}</strong> findings</span></div></section>`}
-function side(){return `<aside class="sidebar"><section class="card"><div class="card-head"><div><div class="card-title">Search everything</div><div class="card-sub">Records and evidence</div></div></div><div class="card-body stack"><div class="field"><input id="search" placeholder="Search records" value="${esc(state.search)}"></div><button data-action="clear-selection">Clear selection</button></div></section><section class="card"><div class="card-head"><div class="card-title">Filters</div><div class="card-sub">${state.filters.length} active</div></div><div class="card-body"><div class="mini-list">${state.filters.length?state.filters.map((f,i)=>`<div class="mini-item"><b>${esc(f.field)} ${esc(f.op)} ${esc(f.value)}</b><button data-remove-filter="${i}">remove</button></div>`).join(''):'<div class="muted">No active filters</div>'}</div><button data-action="quick-filter">Add anomaly filter</button></div></section><section class="card"><div class="card-head"><div class="card-title">Branches</div><button data-action="branch">Branch</button></div><div class="card-body mini-list">${state.branches.length?state.branches.slice(0,5).map(b=>`<div class="mini-item"><b>${esc(b.name)}</b>${new Date(b.at).toLocaleTimeString()}</div>`).join(''):'<div class="muted">No branches yet</div>'}</div></section></aside>`}
-function right(){const c=correlations(),conc=concentrations(),outs=outliers();return `<aside class="rightbar"><section class="card"><div class="card-head"><div><div class="card-title">Agent handoff</div><div class="card-sub">The browser agent sees this semantic state</div></div></div><div class="card-body right-note">Selections, filters, hypotheses, evidence, relationships, metrics, and canvas views are registered as WebMCP tools.<div class="stack" style="margin-top:9px"><button class="prompt-chip">Find the strongest pattern and try to falsify it</button><button class="prompt-chip">Explain what connects my current selection</button></div></div></section><section class="card"><div class="card-head"><div><div class="card-title">Investigation signals</div><div class="card-sub">Fast, transparent leads</div></div></div><div class="card-body"><div class="mini-list"><div class="mini-item"><b>Correlated with ${metricLabel(scenario().y)}</b>${c.map(x=>`${metricLabel(x.m)} r=${x.r.toFixed(3)}`).join('<br>')}</div><div class="mini-item"><b>${metricLabel(scenario().dimensions[0])} concentration</b>${conc.map(([k,n])=>`${esc(k)} ${n}`).join('<br>')}</div><div class="mini-item"><b>${metricLabel(scenario().y)} outliers</b>${outs.map(x=>`${x.id} z=${x.z.toFixed(2)}`).join('<br>')}</div></div></div></section><section class="card"><div class="card-head"><div class="card-title">Recent activity</div></div><div class="card-body mini-list">${state.activity.slice(0,5).map(a=>`<div class="mini-item"><b>${esc(a.actor)}</b>${esc(a.action)}</div>`).join('')}</div></section></aside>`}
-function metrics(){const rows=visibleRows(),sel=selectedRows();return `<div class="metric-grid">${scenario().metrics.map(m=>{const a=avg(rows,m),b=sel.length?avg(sel,m):a,d=b-a;return `<div class="metric"><div class="metric-label">${metricLabel(m)}</div><div class="metric-value">${fmt(b)}</div><div class="metric-delta">${sel.length?`${d>=0?'+':''}${fmt(d)} vs all records`:'all visible records'}</div></div>`}).join('')}</div>`}
-function explore(){const rows=visibleRows(),disc=discriminator(),cols=['id','timestamp',...scenario().dimensions.slice(0,3),...scenario().metrics.slice(0,2)];return `<main class="main"><section class="tab-page active">${metrics()}<div class="grid2"><section class="card"><div class="card-head"><div><div class="card-title">Linked scatter</div><div class="card-sub">x: ${metricLabel(scenario().x)} · y: ${metricLabel(scenario().y)}</div></div></div><div class="chart-wrap">${scatterSVG(rows)}</div></section><section class="card"><div class="card-head"><div><div class="card-title">Timeline</div><div class="card-sub">${metricLabel(scenario().y)} over time</div></div></div><div class="chart-wrap">${timelineSVG(rows)}</div></section></div>${state.selected.size?`<section class="card"><div class="card-head"><div><div class="card-title">Selection vs rest</div><div class="card-sub">Strongest discriminating features</div></div></div><div class="card-body selection-strip">${disc.map(d=>`<div class="signal"><b>${esc(d.label)}</b><div class="muted">${esc(d.detail)}</div><div class="bar"><i style="width:${Math.round(d.score*100)}%"></i></div></div>`).join('')}</div></section>`:''}<section class="card"><div class="card-head"><div><div class="card-title">Evidence table</div><div class="card-sub">Showing first 200 of ${rows.length} visible records</div></div></div><div class="table-wrap"><table><thead><tr>${cols.map(c=>`<th>${metricLabel(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(0,200).map(r=>`<tr data-row-id="${r.id}" class="${state.selected.has(r.id)?'selected':''}">${cols.map(c=>`<td>${c==='timestamp'?new Date(r[c]).toLocaleString():esc(typeof r[c]==='number'?fmt(r[c]):r[c])}</td>`).join('')}</tr>`).join('')}</tbody></table></div></section><section class="card"><div class="card-head"><div><div class="card-title">Relationship graph</div><div class="card-sub">Entities and evidence relationships</div></div></div><div class="graph">${graphSVG()}</div></section></main>`}
-function hypotheses(){const s=scenario();return `<main class="main"><section class="tab-page active"><div class="card"><div class="card-head"><div><div class="card-title">Competing hypotheses</div><div class="card-sub">Keep explanations explicit and falsifiable</div></div><button data-action="fork-hypothesis">Fork leading hypothesis</button></div><div class="card-body hyp-grid">${s.hypotheses.map(h=>`<article class="card hypothesis"><h3>${esc(h.title)}</h3><div class="muted">${Math.round(h.confidence*100)}% confidence · ${esc(h.status)}</div><div class="confidence"><i style="width:${h.confidence*100}%"></i></div><div class="ledger"><div><b>Evidence for</b><div class="muted">${h.support.length?esc(h.support.join(', ')):'None yet'}</div></div><div><b>Evidence against</b><div class="muted">${h.against.length?esc(h.against.join(', ')):'None yet'}</div></div></div><div class="finding" style="margin-top:9px"><strong>Falsification test</strong>${esc(h.falsify)}</div><button data-hypothesis="${h.id}">Challenge hypothesis</button></article>`).join('')}</div></div>${state.findings.length?`<section class="card"><div class="card-head"><div class="card-title">Agent findings</div></div><div class="card-body stack">${state.findings.map(f=>`<div class="finding"><strong>${esc(f.title)}</strong>${esc(f.body)}</div>`).join('')}</div></section>`:''}</section></main>`}
-function evidence(){return `<main class="main"><section class="tab-page active"><div class="evidence-grid">${scenario().evidence.map(evidenceCard).join('')}</div></section></main>`}
-function provenance(){return `<main class="main"><section class="tab-page active"><div class="card"><div class="card-head"><div><div class="card-title">Investigation provenance</div><div class="card-sub">Every human, agent, and system mutation remains inspectable</div></div></div><div class="card-body">${state.activity.map(a=>`<div class="prov ${a.actor}"><span class="dot"></span><div><b>${esc(a.actor)}</b> · ${new Date(a.at).toLocaleTimeString()}<div class="muted">${esc(a.action)}</div></div></div>`).join('')}</div></div></section></main>`}
-function canvasCard(title,body,x,y,w=330,h=220,agent=false){return `<article class="canvas-card ${agent?'agent-created':''}" data-canvas-card style="left:${x}px;top:${y}px;width:${w}px;min-height:${h}px"><div class="card-head"><div class="card-title">${esc(title)}</div></div><div class="card-body">${body}</div></article>`}
-function canvas(){const s=scenario(),e=s.evidence[0],h=s.hypotheses[0],disc=discriminator();const cards=[canvasCard('Current evidence',`<b>${esc(e.title)}</b><p class="muted">${esc(e.body)}</p>`,50,55,340,210),canvasCard('Leading hypothesis',`<b>${esc(h.title)}</b><div class="confidence"><i style="width:${h.confidence*100}%"></i></div><div class="muted">Falsify: ${esc(h.falsify)}</div>`,460,70,370,220),canvasCard('Selection analysis',state.selected.size?disc.map(d=>`<div class="signal"><b>${esc(d.label)}</b><div class="muted">${esc(d.detail)}</div></div>`).join(''):'<div class="muted">Select records in Explore to make shared attention visible here.</div>',880,80,360,260,true),canvasCard('Causal sketch',`<div class="finding"><strong>${esc(s.graph.nodes[0])}</strong>depends on ${esc(s.graph.nodes[1]||'evidence')}</div><div class="finding" style="margin-top:7px"><strong>${esc(s.graph.nodes[2]||'change')}</strong> may explain the observed shift</div>`,260,390,350,220,true),canvasCard('Evidence map',evidenceVisual(s.evidence.find(x=>x.type==='map')||{type:'map'}),690,400,330,220),canvasCard('Working findings',state.findings.length?state.findings.map(f=>`<div class="finding"><strong>${esc(f.title)}</strong>${esc(f.body)}</div>`).join(''):'<div class="muted">Agent-created findings appear here and persist with the investigation.</div>',1080,410,340,240,true)];return `<main class="main"><section class="tab-page active"><div class="canvas-toolbar"><button data-action="canvas-zoom-in">Zoom +</button><button data-action="canvas-zoom-out">Zoom −</button><button data-action="canvas-reset">Reset layout</button><button data-action="agent-view">Create agent view</button><span class="pill">${Math.round(state.canvasZoom*100)}%</span></div><div class="canvas-shell"><div class="canvas-stage" style="transform:scale(${state.canvasZoom})"><div class="canvas-link" style="left:380px;top:165px;width:100px;transform:rotate(-8deg)"></div><div class="canvas-link" style="left:815px;top:175px;width:95px;transform:rotate(4deg)"></div><div class="canvas-link" style="left:575px;top:390px;width:145px;transform:rotate(-23deg)"></div>${cards.join('')}</div></div></section></main>`}
-function render(){const center=state.tab==='Explore'?explore():state.tab==='Hypotheses'?hypotheses():state.tab==='Evidence'?evidence():state.tab==='Canvas'?canvas():provenance();$('#app').innerHTML=`<div class="app-shell">${topbar()}${head()}<div class="layout">${side()}${center}${right()}</div><div class="footer-note">Investigation Canvas · semantic shared state · WebMCP-ready · local-first demo workspace</div></div>`;bind()}
-function bind(){
-  $$('[data-tab]').forEach(b=>b.onclick=()=>mutate(`Opened ${b.dataset.tab}`,()=>state.tab=b.dataset.tab));
-  $('#scenario-select').onchange=e=>mutate(`Opened ${scenarios.find(x=>x.id===e.target.value)?.title}`,()=>{state.scenarioId=e.target.value;state.selected.clear();state.filters=[];state.tab='Explore'});
-  const search=$('#search');if(search)search.onchange=e=>mutate(`Searched records for ${e.target.value}`,()=>state.search=e.target.value);
-  $$('tbody tr').forEach(tr=>tr.onclick=()=>mutate(`Selected ${tr.dataset.rowId}`,()=>{state.selected.has(tr.dataset.rowId)?state.selected.delete(tr.dataset.rowId):state.selected.add(tr.dataset.rowId)}));
-  $$('.point').forEach(p=>p.onclick=()=>mutate(`Selected ${p.dataset.id} from scatter`,()=>{state.selected.has(p.dataset.id)?state.selected.delete(p.dataset.id):state.selected.add(p.dataset.id)}));
-  $$('[data-focus-evidence]').forEach(b=>b.onclick=()=>mutate(`Pinned evidence ${b.dataset.focusEvidence}`,()=>state.annotations.push({id:uid('ann'),text:`Pinned ${b.dataset.focusEvidence}`,at:Date.now()})));
-  $$('[data-remove-filter]').forEach(b=>b.onclick=()=>mutate('Removed filter',()=>state.filters.splice(+b.dataset.removeFilter,1)));
-  $('[data-action="clear-selection"]')?.addEventListener('click',()=>mutate('Cleared selection',()=>state.selected.clear()));
-  $('[data-action="quick-filter"]')?.addEventListener('click',()=>mutate('Added anomaly filter',()=>state.filters.push({field:scenario().y,op:'>',value:avg(scenario().rows,scenario().y)})));
-  $('[data-action="branch"]')?.addEventListener('click',()=>mutate('Branched investigation',()=>state.branches.push({id:uid('branch'),name:`Branch ${state.branches.length+1}`,at:Date.now(),state:snapshot()})));
-  $('[data-action="fork-hypothesis"]')?.addEventListener('click',()=>mutate('Forked leading hypothesis',()=>{const h=scenario().hypotheses[0];scenario().hypotheses.push({...structuredClone(h),id:uid('hyp'),title:`Alternative: ${h.title}`,confidence:Math.max(.2,h.confidence-.25),support:[],against:[]})}));
-  $$('[data-hypothesis]').forEach(b=>b.onclick=()=>mutate('Added counterevidence challenge',()=>{const h=scenario().hypotheses.find(x=>x.id===b.dataset.hypothesis);if(h){h.confidence=clamp(h.confidence-.08,.05,.95);state.findings.push({id:uid('f'),title:'Counterevidence challenge',body:`Re-evaluate “${h.title}” against: ${h.falsify}`})}}));
-  $('[data-action="canvas-zoom-in"]')?.addEventListener('click',()=>{state.canvasZoom=clamp(state.canvasZoom+.1,.7,1.4);render()});
-  $('[data-action="canvas-zoom-out"]')?.addEventListener('click',()=>{state.canvasZoom=clamp(state.canvasZoom-.1,.7,1.4);render()});
-  $('[data-action="canvas-reset"]')?.addEventListener('click',()=>{state.canvasZoom=1;render()});
-  $('[data-action="agent-view"]')?.addEventListener('click',()=>mutate('Agent created a derived evidence view',()=>state.findings.push({id:uid('f'),title:'Derived view',body:`Focused ${metricLabel(scenario().y)} against ${metricLabel(scenario().x)} and current selection.`}),'agent'));
-  $('[data-action="undo"]')?.addEventListener('click',()=>{const prev=state.history.pop();if(prev){state.future.push(snapshot());restore(prev)}});
-  $('[data-action="redo"]')?.addEventListener('click',()=>{const next=state.future.pop();if(next){state.history.push(snapshot());restore(next)}});
-  $('[data-action="export"]')?.addEventListener('click',()=>{const blob=new Blob([JSON.stringify({version:1,scenario:scenario(),workspace:snapshot(),activity:state.activity},null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='investigation-canvas.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),200)});
-  $('[data-action="import"]')?.addEventListener('click',()=>$('#file-input').click());
-  bindCanvasDrag();
+const store = new InvestigationStore();
+const root = document.getElementById('app');
+const fileInput = document.getElementById('file-input');
+const palette = ['#7aa2ff', '#62cfe5', '#bd9cff', '#66d19e', '#f4c96b', '#f0a35b', '#ff7d85', '#8fd0a9'];
+let modal = null;
+let tooltip = null;
+let toastTimer = null;
+
+const e = escapeHtml;
+const label = (field) => String(field || '—').replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase());
+const colorFor = (value, values) => palette[Math.max(0, values.indexOf(String(value))) % palette.length];
+const timeShort = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso ?? '') : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit' });
+};
+
+function toast(message) {
+  let stack = document.querySelector('.toast-stack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.className = 'toast-stack';
+    document.body.appendChild(stack);
+  }
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  stack.appendChild(el);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.remove(), 2800);
 }
-$('#file-input').addEventListener('change',async e=>{const f=e.target.files?.[0];if(!f)return;try{const text=await f.text();if(f.name.endsWith('.json')){const data=JSON.parse(text);if(data.workspace)restore(data.workspace)}else{const [head,...lines]=text.trim().split(/\r?\n/),cols=head.split(',').map(x=>x.trim()),rows=lines.map((l,i)=>Object.fromEntries(cols.map((c,j)=>[c,(l.split(',')[j]||'').trim()])));state.findings.push({id:uid('f'),title:'Imported CSV',body:`Loaded ${rows.length} rows with ${cols.length} fields for follow-up analysis.`});render()}}catch(err){console.error(err)}e.target.value=''});
-function bindCanvasDrag(){if(innerWidth<760)return;$$('[data-canvas-card]').forEach(card=>{const h=$('.card-head',card);let start=null;h.onpointerdown=e=>{start={x:e.clientX,y:e.clientY,l:parseFloat(card.style.left)||0,t:parseFloat(card.style.top)||0};h.setPointerCapture(e.pointerId)};h.onpointermove=e=>{if(!start)return;card.style.left=`${start.l+(e.clientX-start.x)/state.canvasZoom}px`;card.style.top=`${start.t+(e.clientY-start.y)/state.canvasZoom}px`};h.onpointerup=()=>{start=null;state.activity.unshift({id:uid('a'),actor:'human',action:'Repositioned canvas view',at:Date.now()})}})}
 
-const toolDefs=[
- ['describe_workspace',true],['list_records',true],['get_record',true],['query_records',true],['get_selection',true],['set_selection',false],['select_where',false],['clear_selection',false],['summarize_records',true],['compare_selection_to_rest',true],['compare_queries',true],['rank_discriminating_features',true],['rank_correlations',true],['find_outliers',true],['add_filter',false],['remove_filter',false],['clear_filters',false],['set_record_search',false],['configure_view',false],['focus_record',false],['search_evidence',true,true],['get_evidence',true,true],['focus_evidence',false,true],['list_evidence',true,true],['get_relationship_graph',true],['focus_graph_node',false],['trace_relationships',true],['list_hypotheses',true],['create_hypothesis',false],['update_hypothesis',false],['fork_hypothesis',false],['attach_evidence_to_hypothesis',false],['find_counterevidence',true,true],['list_falsification_tests',true],['annotate_workspace',false],['list_annotations',true],['save_analysis_view',false],['restore_analysis_view',false],['create_canvas_view',false],['move_canvas_view',false],['link_canvas_views',false],['list_canvas_views',true],['branch_investigation',false],['restore_investigation_branch',false],['list_branches',true],['add_finding',false],['get_activity_provenance',true],['export_investigation',true]
-];
-function toolResult(name,args){const s=scenario(),rows=visibleRows();switch(name){case'describe_workspace':return {scenario:s.title,visible:rows.length,selected:[...state.selected],filters:state.filters,tab:state.tab,hypotheses:s.hypotheses,evidence:s.evidence.map(({body,...e})=>e)};case'list_records':return rows.slice(0,args?.limit||100);case'get_record':return s.rows.find(r=>r.id===args?.id)||null;case'query_records':return rows.filter(r=>!args?.field||String(r[args.field])===String(args.value)).slice(0,args?.limit||100);case'get_selection':return selectedRows();case'set_selection':mutate('Agent set shared selection',()=>state.selected=new Set(args?.ids||[]),'agent');return {selected:[...state.selected]};case'select_where':{const found=s.rows.filter(r=>{const v=r[args?.field],x=args?.value;return args?.op==='>'?+v>+x:args?.op==='<'?+v<+x:String(v)===String(x)});mutate(`Agent selected ${found.length} records`,()=>state.selected=new Set(found.map(r=>r.id)),'agent');return {count:found.length,ids:found.map(r=>r.id)}}case'clear_selection':mutate('Agent cleared selection',()=>state.selected.clear(),'agent');return {ok:true};case'summarize_records':return Object.fromEntries(s.metrics.map(m=>[m,{mean:avg(rows,m),min:Math.min(...rows.map(r=>r[m])),max:Math.max(...rows.map(r=>r[m]))}]));case'compare_selection_to_rest':return discriminator();case'rank_discriminating_features':return discriminator();case'rank_correlations':return correlations();case'find_outliers':return outliers();case'add_filter':mutate('Agent added filter',()=>state.filters.push({field:args.field,op:args.op||'=',value:args.value}),'agent');return {filters:state.filters};case'remove_filter':mutate('Agent removed filter',()=>state.filters.splice(args.index||0,1),'agent');return {filters:state.filters};case'clear_filters':mutate('Agent cleared filters',()=>state.filters=[],'agent');return {ok:true};case'set_record_search':mutate('Agent changed search',()=>state.search=args.query||'','agent');return {search:state.search};case'focus_record':{const r=s.rows.find(x=>x.id===args.id);if(r)mutate(`Agent focused ${r.id}`,()=>state.selected=new Set([r.id]),'agent');return r||null}case'search_evidence':{const q=String(args?.query||'').toLowerCase();return s.evidence.filter(e=>!q||`${e.title} ${e.body}`.toLowerCase().includes(q))}case'get_evidence':return s.evidence.find(e=>e.id===args.id)||null;case'focus_evidence':mutate(`Agent focused evidence ${args.id}`,()=>state.tab='Evidence','agent');return s.evidence.find(e=>e.id===args.id)||null;case'list_evidence':return s.evidence;case'get_relationship_graph':return s.graph;case'trace_relationships':return {start:args?.node,edges:s.graph.edges.filter(e=>e.includes(args?.node))};case'list_hypotheses':return s.hypotheses;case'create_hypothesis':{const h={id:uid('hyp'),title:args.title||'Untitled hypothesis',confidence:clamp(+args.confidence||.5,0,1),status:'active',support:[],against:[],falsify:args.falsify||'Find evidence that would contradict this explanation.'};mutate(`Agent created hypothesis ${h.title}`,()=>s.hypotheses.push(h),'agent');return h}case'update_hypothesis':{const h=s.hypotheses.find(x=>x.id===args.id);if(h)mutate(`Agent updated hypothesis ${h.title}`,()=>Object.assign(h,args.patch||{}),'agent');return h||null}case'fork_hypothesis':{const src=s.hypotheses.find(x=>x.id===args.id)||s.hypotheses[0],h={...structuredClone(src),id:uid('hyp'),title:args.title||`Alternative: ${src.title}`,confidence:clamp(src.confidence-.2,.05,.95)};mutate('Agent forked hypothesis',()=>s.hypotheses.push(h),'agent');return h}case'attach_evidence_to_hypothesis':{const h=s.hypotheses.find(x=>x.id===args.hypothesisId);if(h)mutate('Agent attached evidence',()=>{const key=args.stance==='against'?'against':'support';if(!h[key].includes(args.evidenceId))h[key].push(args.evidenceId)},'agent');return h||null}case'find_counterevidence':return s.evidence.filter(e=>e.id!==s.hypotheses[0].support[0]).slice(0,3);case'list_falsification_tests':return s.hypotheses.map(h=>({id:h.id,title:h.title,test:h.falsify}));case'annotate_workspace':{const a={id:uid('ann'),text:args.text||'',at:Date.now()};mutate('Agent annotated workspace',()=>state.annotations.push(a),'agent');return a}case'list_annotations':return state.annotations;case'save_analysis_view':{const v={id:uid('view'),name:args.name||'Saved view',state:snapshot()};mutate('Agent saved analysis view',()=>state.savedViews.push(v),'agent');return v}case'restore_analysis_view':{const v=state.savedViews.find(x=>x.id===args.id);if(v)restore(v.state);return v||null}case'create_canvas_view':mutate('Agent created canvas view',()=>{state.tab='Canvas';state.findings.push({id:uid('f'),title:args.title||'Agent-created view',body:args.body||'Derived from current investigation state.'})},'agent');return {ok:true};case'list_canvas_views':return ['Current evidence','Leading hypothesis','Selection analysis','Causal sketch','Evidence map','Working findings'];case'branch_investigation':{const b={id:uid('branch'),name:args.name||`Branch ${state.branches.length+1}`,at:Date.now(),state:snapshot()};mutate('Agent branched investigation',()=>state.branches.push(b),'agent');return b}case'restore_investigation_branch':{const b=state.branches.find(x=>x.id===args.id);if(b)restore(b.state);return b||null}case'list_branches':return state.branches.map(({state,...b})=>b);case'add_finding':{const f={id:uid('f'),title:args.title||'Finding',body:args.body||''};mutate('Agent added finding',()=>state.findings.push(f),'agent');return f}case'get_activity_provenance':return state.activity;case'export_investigation':return {version:1,scenario:s,workspace:snapshot(),activity:state.activity};default:return {ok:true,name,args}}
+function download(name, content, type = 'application/json') {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 500);
 }
-function registerWebMCP(){const mc=document.modelContext;if(!mc?.registerTool)return;const controller=new AbortController();globalThis.__investigationWebMCPController=controller;for(const [name,readOnly,untrusted] of toolDefs){const tool={name,description:`Investigation Canvas: ${name.replaceAll('_',' ')} using the same workspace state visible to the human.`,inputSchema:{type:'object',additionalProperties:true},annotations:{readOnlyHint:!!readOnly,...(untrusted?{untrustedContentHint:true}:{})},execute:async(args={})=>toolResult(name,args)};try{mc.registerTool(tool,{signal:controller.signal})}catch(err){console.warn('WebMCP registration failed',name,err)}}}
 
-render();registerWebMCP();
+function metricCard(title, value, note, color = 'var(--accent)') {
+  return `<div class="card metric-card" style="--metric-color:${color}"><div class="metric-label">${e(title)}</div><div class="metric-value">${e(value)}</div><div class="metric-note">${e(note)}</div></div>`;
+}
+
+function renderTopbar(s) {
+  const mcpText = s.webmcp.available ? `${s.webmcp.registered} WebMCP tools` : 'WebMCP preview';
+  return `<header class="topbar">
+    <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">Investigation Canvas</div><div class="dataset-title">${e(s.dataset.title)}</div></div></div>
+    <nav class="tabbar" aria-label="Workspace tabs">
+      ${[['explore','Explore'],['canvas','Canvas'],['hypotheses','Hypotheses'],['evidence','Evidence'],['provenance','Provenance']].map(([id,name]) => `<button class="tab ${s.activeTab===id?'active':''}" data-tab="${id}">${name}</button>`).join('')}
+    </nav>
+    <div class="top-actions">
+      <span class="status-pill ${s.webmcp.available?'live':''}" title="${e(s.webmcp.lastError || '')}"><i class="status-dot"></i>${e(mcpText)}</span>
+      <button class="btn ghost" id="undo-btn" title="Undo">Undo</button>
+      <button class="btn ghost" id="redo-btn" title="Redo">Redo</button>
+      <button class="btn" id="import-btn">Import</button>
+      <button class="btn primary" id="export-btn">Export</button>
+    </div>
+  </header>`;
+}
+
+function renderSidebar(s) {
+  const visible = store.getVisibleRecords();
+  const fieldOptions = [...s.dataset.keyFields, ...s.dataset.numericFields].map((f) => `<option value="${e(f)}">${e(label(f))}</option>`).join('');
+  return `<aside class="sidebar ${s.ui.leftCollapsed?'collapsed':''}">
+    <div class="sidebar-header"><span class="sidebar-title">Investigation</span><button class="btn icon ghost" id="toggle-left">${s.ui.leftCollapsed?'›':'‹'}</button></div>
+    <div class="sidebar-body">
+      <section class="section">
+        <div class="section-head"><span class="section-label">Case</span></div>
+        <select class="dataset-switcher" id="dataset-switcher">
+          ${SAMPLE_DATASETS.map((d) => `<option value="${e(d.id)}" ${s.dataset.id===d.id?'selected':''}>${e(d.title)}</option>`).join('')}
+          ${!SAMPLE_DATASETS.some(d=>d.id===s.dataset.id)?`<option selected value="${e(s.dataset.id)}">${e(s.dataset.title)}</option>`:''}
+        </select>
+        <div class="kv"><span>Records</span><strong>${visible.length.toLocaleString()} / ${s.dataset.records.length.toLocaleString()}</strong></div>
+        <div class="kv"><span>Documents</span><strong>${s.dataset.documents.length}</strong></div>
+        <div class="kv"><span>Relationships</span><strong>${s.dataset.graph.edges.length}</strong></div>
+      </section>
+      <section class="section">
+        <div class="section-head"><span class="section-label">Search everything</span></div>
+        <input class="search" id="global-search" value="${e(s.search)}" placeholder="Press Enter to search records" />
+      </section>
+      <section class="section">
+        <div class="section-head"><span class="section-label">Filters</span>${s.filters.length?'<button class="btn ghost" id="clear-filters">Clear</button>':''}</div>
+        <div class="filter-list">${s.filters.map((f) => `<div class="filter-chip"><span>${e(label(f.field))} ${e(f.op || 'eq')} ${e(f.value ?? `${f.min}…${f.max}`)}</span><button data-remove-filter="${e(f.id)}">×</button></div>`).join('')}</div>
+        <div class="filter-form" style="margin-top:8px"><select id="quick-filter-field" class="filter-field">${fieldOptions}</select><select id="quick-filter-op"><option value="eq">equals</option><option value="neq">not equal</option><option value="contains">contains</option><option value="gt">&gt;</option><option value="gte">≥</option><option value="lt">&lt;</option><option value="lte">≤</option></select><input id="quick-filter-value" placeholder="value" /></div>
+        <button class="btn" id="quick-filter-add" style="margin-top:6px;width:100%">Add filter</button>
+      </section>
+      <section class="section">
+        <div class="section-head"><span class="section-label">Saved views</span><button class="btn ghost" id="save-view">Save</button></div>
+        ${s.savedViews.length ? s.savedViews.slice(0,6).map(v => `<div class="saved-item" data-restore-view="${e(v.id)}"><div class="saved-item-title">${e(v.name)}</div><div class="saved-item-meta">${v.filters.length} filters · ${v.selection.length} selected</div></div>`).join('') : '<div class="empty" style="padding:12px 4px">No saved views yet</div>'}
+      </section>
+      <section class="section">
+        <div class="section-head"><span class="section-label">Branches</span><button class="btn ghost" id="new-branch">Branch</button></div>
+        ${s.branches.length ? s.branches.slice(0,5).map(v => `<div class="saved-item" data-restore-branch="${e(v.id)}"><div class="saved-item-title">${e(v.name)}</div><div class="saved-item-meta">restorable analysis state</div></div>`).join('') : '<div class="empty" style="padding:12px 4px">No branches yet</div>'}
+      </section>
+    </div>
+  </aside>`;
+}
+
+function agentSuggestions(s) {
+  if (s.selection.length) return ['Why are these different from the rest?', 'Try to disprove the leading hypothesis using this selection.', 'Find the strongest feature that explains these points.'];
+  if (s.dataset.id === 'checkout-regression') return ['Conversion dropped this week. Investigate the cause.', 'Find multiple independent regressions, not just the largest one.', 'Rule out the payment service and show me the evidence.'];
+  if (s.dataset.id === 'model-regression') return ['Why did validation accuracy regress?', 'Find runs that contradict the dataset-v7 explanation.', 'Compare the strongest two failure modes.'];
+  return ['Find the strongest coordinated pattern.', 'Build competing hypotheses and try to falsify each.', 'Which evidence is untrusted and what can we corroborate?'];
+}
+
+function renderRightbar(s) {
+  return `<aside class="rightbar ${s.ui.rightCollapsed?'collapsed':''}">
+    <div class="sidebar-header"><span class="sidebar-title">Agent + Activity</span><button class="btn icon ghost" id="toggle-right">${s.ui.rightCollapsed?'‹':'›'}</button></div>
+    <div class="sidebar-body">
+      <section class="section"><div class="agent-card"><h3>Shared attention</h3><p>The browser agent can read the same filters, selections, hypotheses, evidence, graph, and visual dimensions you manipulate here.</p>${agentSuggestions(s).map(p=>`<button class="prompt-chip" data-copy-prompt="${e(p)}">${e(p)}</button>`).join('')}</div></section>
+      <section class="section"><div class="section-head"><span class="section-label">Current attention</span></div>
+        <div class="kv"><span>Selected</span><strong>${s.selection.length}</strong></div>
+        <div class="kv"><span>Filters</span><strong>${s.filters.length}</strong></div>
+        <div class="kv"><span>Hypotheses</span><strong>${s.hypotheses.length}</strong></div>
+        <div class="kv"><span>Annotations</span><strong>${s.annotations.length}</strong></div>
+      </section>
+      <section class="section"><div class="section-head"><span class="section-label">Recent activity</span></div><div class="activity-list">${s.activity.slice(0,14).map(a=>`<div class="activity-item ${a.source==='agent'?'agent':''} ${a.kind==='error'?'error':''}"><div class="activity-meta"><span>${e(a.source)} · ${e(a.kind)}</span><span>${e(timeShort(a.at))}</span></div><div class="activity-text">${e(a.text)}</div></div>`).join('')}</div></section>
+    </div>
+  </aside>`;
+}
+
+function renderContextbar(s) {
+  const visible = store.getVisibleRecords();
+  return `<div class="contextbar"><div class="context-stat"><strong>${visible.length.toLocaleString()}</strong><span>visible</span></div><div class="context-stat"><strong>${s.selection.length.toLocaleString()}</strong><span>selected</span></div><div class="context-stat"><strong>${s.hypotheses.filter(h=>h.status!=='rejected').length}</strong><span>live hypotheses</span></div><div class="context-stat"><strong>${s.dataset.documents.filter(d=>d.trust==='untrusted').length}</strong><span>untrusted sources</span></div>${s.selection.length?`<div class="selection-banner">Shared selection: ${s.selection.length} ${e(s.dataset.recordLabel)}${s.selection.length===1?'':'s'} <button class="btn ghost" id="clear-selection">Clear</button></div>`:''}</div>`;
+}
+
+function renderKpis(s, records) {
+  const fields = s.dataset.numericFields.slice(0,4);
+  return `<div class="grid overview">${fields.map((f,i)=>{
+    const avg = mean(records, f);
+    const allAvg = mean(s.dataset.records, f);
+    const delta = avg !== null && allAvg !== null ? avg - allAvg : null;
+    return metricCard(label(f), avg===null?'—':formatNumber(avg), delta===null?'No numeric data':`${delta>=0?'+':''}${formatNumber(delta)} vs all records`, palette[i%palette.length]);
+  }).join('')}</div>`;
+}
+
+function scatterSvg(s, records) {
+  const xField = s.dimensions.x, yField = s.dimensions.y, colorField = s.dimensions.color;
+  const [xmin,xmax] = extent(records,xField), [ymin,ymax] = extent(records,yField);
+  const W=760,H=300, L=48,R=16,T=14,B=34;
+  const sx=v=>L+(Number(v)-xmin)/(xmax-xmin)*(W-L-R);
+  const sy=v=>T+(1-(Number(v)-ymin)/(ymax-ymin))*(H-T-B);
+  const colors = groupCounts(records,colorField).slice(0,8).map(x=>x.value);
+  const selected = new Set(s.selection);
+  const circles = records.slice(0,1800).map(r=>{
+    const x=safeNumber(r[xField]), y=safeNumber(r[yField]); if(x===null||y===null)return '';
+    const sel=selected.has(r.id); const muted=selected.size&&!sel;
+    const rad = sel?4.3:2.8;
+    return `<circle class="point ${sel?'selected':''} ${muted?'muted':''}" data-record-id="${e(r.id)}" data-cx="${sx(x)}" data-cy="${sy(y)}" cx="${sx(x).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="${rad}" fill="${colorFor(r[colorField],colors)}"><title>${e(r.id)} · ${e(label(xField))} ${e(formatNumber(x))} · ${e(label(yField))} ${e(formatNumber(y))}</title></circle>`;
+  }).join('');
+  const ticks = Array.from({length:5},(_,i)=>i/4);
+  return `<svg id="scatter-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Scatter plot"><g>${ticks.map(t=>{const x=L+t*(W-L-R);const v=xmin+t*(xmax-xmin);return `<line class="grid-line" x1="${x}" x2="${x}" y1="${T}" y2="${H-B}"/><text class="axis-label" x="${x}" y="${H-13}" text-anchor="middle">${e(formatNumber(v))}</text>`}).join('')}${ticks.map(t=>{const y=T+(1-t)*(H-T-B);const v=ymin+t*(ymax-ymin);return `<line class="grid-line" x1="${L}" x2="${W-R}" y1="${y}" y2="${y}"/><text class="axis-label" x="${L-7}" y="${y+3}" text-anchor="end">${e(formatNumber(v))}</text>`}).join('')}<line class="axis-line" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><line class="axis-line" x1="${L}" x2="${L}" y1="${T}" y2="${H-B}"/>${circles}<rect id="scatter-brush" class="brush-rect" width="0" height="0" visibility="hidden"/></g></svg>`;
+}
+
+function renderScatter(s, records) {
+  const fields = s.dataset.numericFields;
+  const colors = groupCounts(records,s.dimensions.color).slice(0,8).map(x=>x.value);
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Linked scatter</div><div class="card-subtitle">Drag to brush; click a point to focus</div></div><div class="card-actions"><select class="field-select" data-dim="x">${fields.map(f=>`<option value="${e(f)}" ${s.dimensions.x===f?'selected':''}>x: ${e(label(f))}</option>`).join('')}</select><select class="field-select" data-dim="y">${fields.map(f=>`<option value="${e(f)}" ${s.dimensions.y===f?'selected':''}>y: ${e(label(f))}</option>`).join('')}</select></div></div><div class="card-body"><div class="legend">${colors.map(v=>`<div class="legend-item"><i class="legend-swatch" style="background:${colorFor(v,colors)}"></i>${e(v)}</div>`).join('')}</div><div class="chart-wrap">${scatterSvg(s,records)}</div></div></div>`;
+}
+
+function renderTimeline(s, records) {
+  const timeField=s.dimensions.time, yField=s.dimensions.y;
+  if(!timeField) return `<div class="card"><div class="card-head"><div class="card-title">Timeline</div></div><div class="empty">No timestamp field detected</div></div>`;
+  const timed=records.filter(r=>!Number.isNaN(Date.parse(r[timeField]))&&safeNumber(r[yField])!==null).sort((a,b)=>Date.parse(a[timeField])-Date.parse(b[timeField]));
+  if(!timed.length) return `<div class="card"><div class="card-head"><div class="card-title">Timeline</div></div><div class="empty">No plottable timeline data</div></div>`;
+  const W=600,H=220,L=44,R=12,T=14,B=30;
+  const tmin=Date.parse(timed[0][timeField]), tmax=Date.parse(timed[timed.length-1][timeField])||tmin+1;
+  const [ymin,ymax]=extent(timed,yField); const sx=v=>L+(Date.parse(v)-tmin)/(tmax-tmin||1)*(W-L-R); const sy=v=>T+(1-(Number(v)-ymin)/(ymax-ymin))*(H-T-B);
+  const step=Math.max(1,Math.floor(timed.length/220)); const sampled=timed.filter((_,i)=>i%step===0||i===timed.length-1);
+  const path=sampled.map((r,i)=>`${i?'L':'M'}${sx(r[timeField]).toFixed(1)},${sy(r[yField]).toFixed(1)}`).join(' ');
+  const selected=new Set(s.selection);
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Timeline</div><div class="card-subtitle">${e(label(yField))} over ${e(label(timeField))}</div></div></div><div class="card-body"><div class="chart-wrap small"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line class="axis-line" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><path d="${path}" fill="none" stroke="#7aa2ff" stroke-width="1.8" opacity=".8"/>${sampled.map(r=>`<circle class="point ${selected.has(r.id)?'selected':''} ${selected.size&&!selected.has(r.id)?'muted':''}" data-record-id="${e(r.id)}" cx="${sx(r[timeField]).toFixed(1)}" cy="${sy(r[yField]).toFixed(1)}" r="${selected.has(r.id)?3.6:2.1}" fill="${r.severity==='critical'?'#ff7d85':r.severity==='warning'?'#f4c96b':'#7aa2ff'}"><title>${e(timeShort(r[timeField]))} · ${e(label(yField))}: ${e(formatNumber(r[yField]))}</title></circle>`).join('')}<text class="axis-label" x="${L}" y="${H-10}">${e(timeShort(timed[0][timeField]))}</text><text class="axis-label" x="${W-R}" y="${H-10}" text-anchor="end">${e(timeShort(timed[timed.length-1][timeField]))}</text></svg></div></div></div>`;
+}
+
+function renderTable(s, records) {
+  const selected=new Set(s.selection);
+  const columns=['id',s.dimensions.time,...s.dataset.keyFields.slice(0,4),...s.dataset.numericFields.slice(0,4)].filter(Boolean);
+  const uniqueCols=[...new Set(columns)];
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Evidence table</div><div class="card-subtitle">Showing first ${Math.min(200,records.length)} of ${records.length} visible records</div></div></div><div class="card-body"><div class="table-wrap"><table><thead><tr>${uniqueCols.map(c=>`<th>${e(label(c))}</th>`).join('')}</tr></thead><tbody>${records.slice(0,200).map(r=>`<tr data-row-id="${e(r.id)}" class="${selected.has(r.id)?'selected-row':''} ${s.focusedRecordId===r.id?'focused-row':''}">${uniqueCols.map(c=>`<td>${c==='severity'?`<span class="severity ${e(r[c])}">${e(r[c])}</span>`:c===s.dimensions.time?e(timeShort(r[c])):e(formatNumber(r[c]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></div>`;
+}
+
+function renderGraph(s) {
+  const {nodes,edges}=s.dataset.graph;
+  if(!nodes.length) return `<div class="card"><div class="card-head"><div class="card-title">Relationship graph</div></div><div class="empty">No relationship graph imported</div></div>`;
+  const W=520,H=310,cx=W/2,cy=H/2,rx=185,ry=110;
+  const pos=new Map(nodes.map((n,i)=>[n.id,{x:cx+Math.cos((i/nodes.length)*Math.PI*2-Math.PI/2)*rx,y:cy+Math.sin((i/nodes.length)*Math.PI*2-Math.PI/2)*ry}]));
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Relationship graph</div><div class="card-subtitle">Entities and evidence relationships</div></div></div><div class="card-body"><div class="graph-wrap"><svg viewBox="0 0 ${W} ${H}">${edges.map(ed=>{const a=pos.get(ed.source),b=pos.get(ed.target);if(!a||!b)return'';const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;return `<line class="graph-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><text class="graph-edge-label" x="${mx}" y="${my-4}" text-anchor="middle">${e(ed.label)}</text>`}).join('')}${nodes.map(n=>{const p=pos.get(n.id);return `<g class="graph-node ${s.focusedGraphNodeId===n.id?'focused':''}" data-node-id="${e(n.id)}"><circle cx="${p.x}" cy="${p.y}" r="27"/><text x="${p.x}" y="${p.y-2}" text-anchor="middle">${e(n.label.length>16?n.label.slice(0,15)+'…':n.label)}</text><text class="axis-label" x="${p.x}" y="${p.y+10}" text-anchor="middle">${e(n.type)}</text></g>`}).join('')}</svg></div></div></div>`;
+}
+
+function renderSelectionAnalysis(s, records) {
+  if (!s.selection.length) return '';
+  const ids = new Set(s.selection);
+  const a = s.dataset.records.filter(r => ids.has(r.id));
+  const b = records.filter(r => !ids.has(r.id));
+  if (!a.length || !b.length) return '';
+  const features = rankDiscriminatingFeatures(a, b, s.dataset.numericFields, s.dataset.keyFields).slice(0, 6);
+  return `<div class="card" style="margin-bottom:10px"><div class="card-head"><div><div class="card-title">Why this selection is different</div><div class="card-subtitle">Live comparison of ${a.length} selected records against ${b.length} other visible records</div></div></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:7px">${features.map(f => {
+    if (f.type === 'numeric') {
+      const d=f.detail;
+      return `<div class="saved-item"><div class="saved-item-title">${e(label(f.field))}</div><div class="saved-item-meta">selected ${e(formatNumber(d.aMean))} · rest ${e(formatNumber(d.bMean))}</div><div style="font-size:10px;margin-top:5px;color:${d.delta>=0?'var(--green)':'var(--red)'}">${d.delta>=0?'+':''}${e(formatNumber(d.delta))} mean delta</div></div>`;
+    }
+    const d=f.detail;
+    return `<button class="saved-item" style="text-align:left;color:inherit" data-feature-filter-field="${e(f.field)}" data-feature-filter-value="${e(f.value)}"><div class="saved-item-title">${e(label(f.field))}: ${e(f.value)}</div><div class="saved-item-meta">${Math.round(d.aShare*100)}% selected · ${Math.round(d.bShare*100)}% rest</div><div style="font-size:10px;margin-top:5px;color:var(--accent-2)">Click to filter this value</div></button>`;
+  }).join('')}</div></div></div>`;
+}
+
+function renderSignals(s, records) {
+  const target = s.dimensions.y;
+  const correlations = rankCorrelations(records, target, s.dataset.numericFields).slice(0, 4);
+  const categories = groupCounts(records, s.dimensions.color).slice(0, 6);
+  const outliers = findOutliers(records, target, 2).slice(0, 5);
+  const maxCount = Math.max(1, ...categories.map(x => x.count));
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Investigation signals</div><div class="card-subtitle">Fast, transparent leads from the currently visible data</div></div></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px">
+    <div><div class="section-label" style="margin-bottom:7px">Correlated with ${e(label(target))}</div>${correlations.length?correlations.map(c=>`<button class="saved-item" style="width:100%;text-align:left;color:inherit" data-signal-x="${e(c.field)}"><div class="saved-item-title">${e(label(c.field))}</div><div class="saved-item-meta">r = ${e(c.correlation.toFixed(3))}</div></button>`).join(''):'<div class="empty" style="padding:8px">Not enough numeric fields</div>'}</div>
+    <div><div class="section-label" style="margin-bottom:7px">${e(label(s.dimensions.color))} concentration</div>${categories.map(c=>`<button class="saved-item" style="width:100%;text-align:left;color:inherit" data-feature-filter-field="${e(s.dimensions.color)}" data-feature-filter-value="${e(c.value)}"><div style="display:flex;justify-content:space-between;gap:8px"><span class="saved-item-title">${e(c.value)}</span><span class="saved-item-meta">${c.count}</span></div><div style="height:3px;background:#222b35;border-radius:3px;margin-top:6px;overflow:hidden"><i style="display:block;height:100%;width:${Math.max(2,c.count/maxCount*100)}%;background:var(--accent)"></i></div></button>`).join('')}</div>
+    <div><div class="section-label" style="margin-bottom:7px">${e(label(target))} outliers</div>${outliers.length?outliers.map(o=>`<button class="saved-item" style="width:100%;text-align:left;color:inherit" data-focus-outlier="${e(o.record.id)}"><div class="saved-item-title">${e(o.record.id)}</div><div class="saved-item-meta">z = ${e(o.z.toFixed(2))} · ${e(formatNumber(o.record[target]))}</div></button>`).join(''):'<div class="empty" style="padding:8px">No ≥2σ outliers</div>'}</div>
+  </div></div></div>`;
+}
+
+function renderExplore(s) {
+  const records=store.getVisibleRecords();
+  return `${renderKpis(s,records)}${renderSelectionAnalysis(s,records)}<div class="grid analysis">${renderScatter(s,records)}${renderTimeline(s,records)}</div><div style="margin-top:10px">${renderSignals(s,records)}</div><div class="grid bottom">${renderTable(s,records)}${renderGraph(s)}</div>`;
+}
+
+function evidenceName(s,id){return s.dataset.documents.find(d=>d.id===id)?.title||id;}
+function renderHypotheses(s) {
+  return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div><div style="font-size:15px;font-weight:760">Competing hypotheses</div><div class="card-subtitle">Track support, contradictions, falsification questions, and confidence as the investigation evolves.</div></div><button class="btn primary" id="add-hypothesis">New hypothesis</button></div><div class="hypothesis-grid">${s.hypotheses.map(h=>`<article class="hypothesis-card"><div class="hypothesis-head"><div><div class="hypothesis-title">${e(h.title)}</div><div style="margin-top:7px"><span class="status ${e(h.status)}">${e(h.status)}</span></div></div><div class="confidence"><strong>${Math.round(h.confidence)}%</strong><span>confidence</span></div></div><div class="confidence-bar"><i style="width:${Math.max(0,Math.min(100,h.confidence))}%"></i></div><div class="hypothesis-body"><div style="font-size:10px;color:var(--muted);line-height:1.5">${e(h.notes||'No reasoning note yet.')}</div><div class="evidence-columns"><div class="evidence-box"><h4>Supporting</h4>${h.supporting.length?h.supporting.map(id=>`<button class="evidence-ref" data-focus-doc="${e(id)}">+ ${e(evidenceName(s,id))}</button>`).join(''):'<span class="card-subtitle">None attached</span>'}</div><div class="evidence-box"><h4>Contradicting</h4>${h.contradicting.length?h.contradicting.map(id=>`<button class="evidence-ref" data-focus-doc="${e(id)}">− ${e(evidenceName(s,id))}</button>`).join(''):'<span class="card-subtitle">None attached</span>'}</div></div>${h.questions?.length?`<ul class="question-list">${h.questions.map(q=>`<li>${e(q)}</li>`).join('')}</ul>`:''}${h.parentId?`<div class="fork-badge">Alternative fork of ${e(h.parentId)} · ${e(h.forkReason||'alternative explanation')}</div>`:''}<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"><button class="btn" data-edit-hypothesis="${e(h.id)}">Edit</button><button class="btn ghost" data-attach-evidence="${e(h.id)}">Attach evidence</button><button class="btn ghost" data-fork-hypothesis="${e(h.id)}">Fork</button><button class="btn ghost" data-find-counterevidence="${e(h.id)}">Counterevidence</button></div></div></article>`).join('')||'<div class="empty">No hypotheses yet. Create at least two competing explanations and try to falsify them.</div>'}</div>`;
+}
+
+function renderEvidence(s) {
+  const focused=s.focusedDocumentId?s.dataset.documents.find(d=>d.id===s.focusedDocumentId):null;
+  return `<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px"><div><div style="font-size:15px;font-weight:760">Evidence library</div><div class="card-subtitle">Source material stays distinct from model reasoning. Untrusted evidence is explicitly marked for WebMCP agents.</div></div><input class="search" id="evidence-search" style="width:260px" placeholder="Search documents" /></div>${focused?`<div class="card" style="margin-bottom:10px"><div class="card-head"><div><div class="card-title">${e(focused.title)}</div><div class="card-subtitle">${e(focused.source)} · ${e(focused.type)} · ${e(timeShort(focused.timestamp))}</div></div><span class="trust ${focused.trust==='untrusted'?'untrusted':''}">${e(focused.trust)}</span></div><div class="card-body" style="color:#c5cfda;font-size:12px;line-height:1.65">${renderEvidenceMedia(focused)}<div style="margin-top:${focused.mediaType?'10px':'0'}">${e(focused.text)}</div></div></div>`:''}<div class="document-list" id="document-list">${s.dataset.documents.map(d=>`<article class="document-card ${s.focusedDocumentId===d.id?'focused':''}" data-doc-id="${e(d.id)}" data-doc-search="${e([d.title,d.type,d.source,d.text,...(d.tags||[])].join(' ').toLowerCase())}"><div class="doc-top"><span class="doc-type">${e(d.type)}</span><span class="trust ${d.trust==='untrusted'?'untrusted':''}">${e(d.trust)}</span></div><div class="doc-title">${e(d.title)}</div><div class="doc-text">${e(d.text)}</div><div class="tags">${(d.tags||[]).map(t=>`<span class="tag">${e(t)}</span>`).join('')}</div></article>`).join('')||'<div class="empty">No documents imported</div>'}</div>`;
+}
+
+function renderProvenance(s) {
+  return `<div class="grid analysis"><div class="card"><div class="card-head"><div><div class="card-title">Investigation provenance</div><div class="card-subtitle">Auditable human + agent action trail</div></div></div><div class="card-body"><div class="activity-list">${s.activity.map(a=>`<div class="activity-item ${a.source==='agent'?'agent':''} ${a.kind==='error'?'error':''}"><div class="activity-meta"><span>${e(a.source)} · ${e(a.kind)}</span><span>${e(timeShort(a.at))}</span></div><div class="activity-text">${e(a.text)}</div></div>`).join('')}</div></div></div><div><div class="card" style="margin-bottom:10px"><div class="card-head"><div class="card-title">Annotations</div><button class="btn" id="add-annotation">Add</button></div><div class="card-body">${s.annotations.length?s.annotations.map(a=>`<div class="annotation"><div class="annotation-meta">${e(a.tone||'note')} · ${e(a.targetType||'workspace')} ${e(a.targetId||'')}</div><div class="annotation-text">${e(a.text)}</div></div>`).join(''):'<div class="empty">No annotations yet</div>'}</div></div><div class="card"><div class="card-head"><div class="card-title">WebMCP surface</div></div><div class="card-body"><div class="kv"><span>Status</span><strong>${s.webmcp.available?'available':'browser unsupported'}</strong></div><div class="kv"><span>Registered tools</span><strong>${s.webmcp.registered}</strong></div><div class="kv"><span>Read/write tools</span><strong>${createWebMcpTools(store).length}</strong></div><button class="btn" id="show-tools" style="width:100%;margin-top:8px">Inspect tool catalog</button></div></div></div></div>`;
+}
+
+function renderMain(s) {
+  const content=s.activeTab==='canvas'?renderSpatialCanvas(s,store):s.activeTab==='hypotheses'?renderHypotheses(s):s.activeTab==='evidence'?renderEvidence(s):s.activeTab==='provenance'?renderProvenance(s):renderExplore(s);
+  return `<main class="main">${renderContextbar(s)}<div class="content">${content}</div></main>`;
+}
+
+function render() {
+  const s=store.state;
+  root.innerHTML=`<div class="app-shell">${renderTopbar(s)}<div class="workspace ${s.ui.leftCollapsed?'left-collapsed':''} ${s.ui.rightCollapsed?'right-collapsed':''}">${renderSidebar(s)}${renderMain(s)}${renderRightbar(s)}</div></div>`;
+  if(modal) renderModal();
+  bindEvents();
+}
+
+function showModal(kind,data={}) { modal={kind,data}; renderModal(); }
+function closeModal(){ modal=null; document.querySelector('.modal-backdrop')?.remove(); }
+function renderModal(){
+  document.querySelector('.modal-backdrop')?.remove(); if(!modal)return;
+  const wrap=document.createElement('div');wrap.className='modal-backdrop';
+  if(modal.kind==='hypothesis'){
+    const h=modal.data.h||{};
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>${h.id?'Edit':'Create'} hypothesis</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body"><div class="form-grid"><div class="field"><label>Falsifiable statement</label><textarea id="hyp-title">${e(h.title||'')}</textarea></div><div class="form-grid two"><div class="field"><label>Confidence 0–100</label><input id="hyp-confidence" type="number" min="0" max="100" value="${e(h.confidence??50)}" /></div><div class="field"><label>Status</label><select id="hyp-status">${['testing','supported','weakened','rejected','unresolved'].map(x=>`<option ${h.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="field"><label>Questions that could falsify it (one per line)</label><textarea id="hyp-questions">${e((h.questions||[]).join('\n'))}</textarea></div><div class="field"><label>Reasoning note</label><textarea id="hyp-notes">${e(h.notes||'')}</textarea></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-hypothesis">Save hypothesis</button></div></div></div>`;
+  } else if(modal.kind==='attach'){
+    const h=store.state.hypotheses.find(x=>x.id===modal.data.hypothesisId);
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Attach evidence</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body"><div class="field"><label>Hypothesis</label><div style="font-size:12px">${e(h?.title||'')}</div></div><div class="field" style="margin-top:10px"><label>Evidence document</label><select id="attach-doc">${store.state.dataset.documents.map(d=>`<option value="${e(d.id)}">${e(d.title)}</option>`).join('')}</select></div><div class="field" style="margin-top:10px"><label>Stance</label><select id="attach-stance"><option value="supporting">Supporting</option><option value="contradicting">Contradicting</option></select></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-attach">Attach</button></div></div></div>`;
+  } else if(modal.kind==='annotation'){
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Add annotation</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body"><div class="form-grid"><div class="field"><label>Target</label><select id="ann-target"><option>workspace</option><option>selection</option><option>record</option><option>document</option><option>graph-node</option><option>hypothesis</option></select></div><div class="field"><label>Target ID (optional)</label><input id="ann-id" /></div><div class="field"><label>Annotation</label><textarea id="ann-text"></textarea></div><div class="field"><label>Tone</label><select id="ann-tone"><option>finding</option><option>question</option><option>warning</option><option>note</option></select></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-annotation">Add annotation</button></div></div></div>`;
+  } else if(modal.kind==='tools'){
+    const tools=createWebMcpTools(store);
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>WebMCP tool catalog (${tools.length})</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body">${tools.map(t=>`<div class="saved-item"><div class="saved-item-title"><code>${e(t.name)}</code> <span class="status">${t.annotations?.readOnlyHint?'read':'write'}</span>${t.annotations?.untrustedContentHint?'<span class="status weakened" style="margin-left:4px">untrusted output</span>':''}</div><div class="saved-item-meta" style="line-height:1.4">${e(t.description)}</div></div>`).join('')}</div></div>`;
+  }
+  document.body.appendChild(wrap);
+  wrap.querySelectorAll('[data-close-modal]').forEach(b=>b.addEventListener('click',closeModal));
+  wrap.addEventListener('click',ev=>{if(ev.target===wrap)closeModal();});
+  wrap.querySelector('#save-hypothesis')?.addEventListener('click',()=>{const input={title:document.querySelector('#hyp-title').value.trim(),confidence:Number(document.querySelector('#hyp-confidence').value),status:document.querySelector('#hyp-status').value,questions:document.querySelector('#hyp-questions').value.split('\n').map(x=>x.trim()).filter(Boolean),notes:document.querySelector('#hyp-notes').value.trim()};if(!input.title)return toast('Hypothesis needs a statement'); if(modal.data.h?.id)store.updateHypothesis(modal.data.h.id,input);else store.addHypothesis(input);closeModal();});
+  wrap.querySelector('#save-attach')?.addEventListener('click',()=>{store.attachEvidence(modal.data.hypothesisId,document.querySelector('#attach-doc').value,document.querySelector('#attach-stance').value);closeModal();});
+  wrap.querySelector('#save-annotation')?.addEventListener('click',()=>{const text=document.querySelector('#ann-text').value.trim();if(!text)return;store.addAnnotation({targetType:document.querySelector('#ann-target').value,targetId:document.querySelector('#ann-id').value.trim(),text,tone:document.querySelector('#ann-tone').value});closeModal();});
+}
+
+function bindEvents(){
+  document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>store.mutate(s=>{s.activeTab=b.dataset.tab;},{history:false})));
+  document.querySelector('#toggle-left')?.addEventListener('click',()=>store.mutate(s=>{s.ui.leftCollapsed=!s.ui.leftCollapsed;},{history:false}));
+  document.querySelector('#toggle-right')?.addEventListener('click',()=>store.mutate(s=>{s.ui.rightCollapsed=!s.ui.rightCollapsed;},{history:false}));
+  document.querySelector('#undo-btn')?.addEventListener('click',()=>store.undo()||toast('Nothing to undo'));
+  document.querySelector('#redo-btn')?.addEventListener('click',()=>store.redo()||toast('Nothing to redo'));
+  document.querySelector('#dataset-switcher')?.addEventListener('change',ev=>{if(SAMPLE_DATASETS.some(d=>d.id===ev.target.value))store.loadDataset(ev.target.value)});
+  document.querySelector('#global-search')?.addEventListener('keydown',ev=>{if(ev.key==='Enter')store.setSearch(ev.target.value)});
+  document.querySelector('#clear-filters')?.addEventListener('click',()=>store.clearFilters());
+  document.querySelectorAll('[data-remove-filter]').forEach(b=>b.addEventListener('click',()=>store.removeFilter(b.dataset.removeFilter)));
+  document.querySelector('#quick-filter-add')?.addEventListener('click',()=>{const field=document.querySelector('#quick-filter-field').value;const value=document.querySelector('#quick-filter-value').value;const op=document.querySelector('#quick-filter-op').value;if(value!=='')store.addFilter({field,op,value});});
+  document.querySelector('#clear-selection')?.addEventListener('click',()=>store.clearSelection());
+  document.querySelectorAll('[data-feature-filter-field]').forEach(b=>b.addEventListener('click',()=>store.addFilter({field:b.dataset.featureFilterField,op:'eq',value:b.dataset.featureFilterValue})));
+  document.querySelectorAll('[data-signal-x]').forEach(b=>b.addEventListener('click',()=>store.setDimension('x',b.dataset.signalX)));
+  document.querySelectorAll('[data-focus-outlier]').forEach(b=>b.addEventListener('click',()=>store.setSelection([b.dataset.focusOutlier])));
+  document.querySelector('#save-view')?.addEventListener('click',()=>{const name=prompt('View name');if(name)store.saveView(name)});
+  document.querySelector('#new-branch')?.addEventListener('click',()=>{const name=prompt('Branch name');if(name)store.createBranch(name)});
+  document.querySelectorAll('[data-restore-view]').forEach(el=>el.addEventListener('click',()=>store.restoreView(el.dataset.restoreView)));
+  document.querySelectorAll('[data-restore-branch]').forEach(el=>el.addEventListener('click',()=>store.restoreBranch(el.dataset.restoreBranch)));
+  document.querySelectorAll('[data-dim]').forEach(sel=>sel.addEventListener('change',()=>store.setDimension(sel.dataset.dim,sel.value)));
+  document.querySelectorAll('[data-row-id]').forEach(row=>row.addEventListener('click',ev=>{store.state.focusedRecordId=row.dataset.rowId;store.toggleSelection(row.dataset.rowId,ev.ctrlKey||ev.metaKey||ev.shiftKey);}));
+  document.querySelectorAll('.point[data-record-id]').forEach(pt=>pt.addEventListener('click',ev=>{ev.stopPropagation();store.state.focusedRecordId=pt.dataset.recordId;store.toggleSelection(pt.dataset.recordId,ev.ctrlKey||ev.metaKey||ev.shiftKey);}));
+  bindScatterBrush();
+  document.querySelectorAll('[data-node-id]').forEach(n=>n.addEventListener('click',()=>store.mutate(s=>{s.focusedGraphNodeId=n.dataset.nodeId;},{activity:{kind:'graph',text:`Focused graph node ${n.dataset.nodeId}`}})));
+  document.querySelectorAll('[data-fork-hypothesis]').forEach(b=>b.addEventListener('click',()=>{const parent=store.state.hypotheses.find(h=>h.id===b.dataset.forkHypothesis);const title=prompt('Alternative hypothesis',parent?`${parent.title} — alternative`:'Alternative hypothesis');if(title)store.forkHypothesis(b.dataset.forkHypothesis,{title,forkReason:'Human-created alternative'});}));
+  document.querySelectorAll('[data-find-counterevidence]').forEach(b=>b.addEventListener('click',()=>{const hits=store.discoverCounterevidence(b.dataset.findCounterevidence,6);if(!hits.length)return toast('No unattached counterevidence candidates found');const top=hits[0].document;store.mutate(s=>{s.focusedDocumentId=top.id;s.activeTab='evidence';},{history:false});toast(`Counterevidence candidate: ${top.title}`);}));
+  bindSpatialCanvasEvents(store);
+  document.querySelector('#add-hypothesis')?.addEventListener('click',()=>showModal('hypothesis'));
+  document.querySelectorAll('[data-edit-hypothesis]').forEach(b=>b.addEventListener('click',()=>showModal('hypothesis',{h:store.state.hypotheses.find(h=>h.id===b.dataset.editHypothesis)})));
+  document.querySelectorAll('[data-attach-evidence]').forEach(b=>b.addEventListener('click',()=>showModal('attach',{hypothesisId:b.dataset.attachEvidence})));
+  document.querySelectorAll('[data-focus-doc]').forEach(b=>b.addEventListener('click',()=>store.mutate(s=>{s.focusedDocumentId=b.dataset.focusDoc;s.activeTab='evidence';},{history:false})));
+  document.querySelectorAll('[data-doc-id]').forEach(d=>d.addEventListener('click',()=>store.mutate(s=>{s.focusedDocumentId=d.dataset.docId;},{history:false})));
+  document.querySelector('#evidence-search')?.addEventListener('input',ev=>{const q=ev.target.value.toLowerCase();document.querySelectorAll('[data-doc-search]').forEach(card=>card.classList.toggle('hidden',!card.dataset.docSearch.includes(q)));});
+  document.querySelector('#add-annotation')?.addEventListener('click',()=>showModal('annotation'));
+  document.querySelector('#show-tools')?.addEventListener('click',()=>showModal('tools'));
+  document.querySelectorAll('[data-copy-prompt]').forEach(b=>b.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(b.dataset.copyPrompt);toast('Prompt copied — use it with the browser agent')}catch{toast(b.dataset.copyPrompt)}}));
+  document.querySelector('#import-btn')?.addEventListener('click',()=>fileInput.click());
+  document.querySelector('#export-btn')?.addEventListener('click',()=>download(`investigation-${store.state.dataset.id}.json`,JSON.stringify(store.exportState(),null,2)));
+}
+
+function bindScatterBrush(){
+  const svg=document.querySelector('#scatter-svg'); if(!svg)return;
+  const brush=svg.querySelector('#scatter-brush'); let start=null,moved=false;
+  const coords=(ev)=>{const rect=svg.getBoundingClientRect();const vb=svg.viewBox.baseVal;return {x:(ev.clientX-rect.left)/rect.width*vb.width,y:(ev.clientY-rect.top)/rect.height*vb.height};};
+  svg.addEventListener('pointerdown',ev=>{if(ev.target.classList.contains('point'))return;start=coords(ev);moved=false;svg.setPointerCapture(ev.pointerId);brush.setAttribute('visibility','visible');brush.setAttribute('x',start.x);brush.setAttribute('y',start.y);brush.setAttribute('width',0);brush.setAttribute('height',0);});
+  svg.addEventListener('pointermove',ev=>{if(!start)return;const p=coords(ev);moved=true;brush.setAttribute('x',Math.min(start.x,p.x));brush.setAttribute('y',Math.min(start.y,p.y));brush.setAttribute('width',Math.abs(p.x-start.x));brush.setAttribute('height',Math.abs(p.y-start.y));});
+  const finish=(ev)=>{if(!start)return;const p=coords(ev);brush.setAttribute('visibility','hidden');if(moved){const x1=Math.min(start.x,p.x),x2=Math.max(start.x,p.x),y1=Math.min(start.y,p.y),y2=Math.max(start.y,p.y);const ids=[...svg.querySelectorAll('.point[data-record-id]')].filter(pt=>{const x=Number(pt.dataset.cx),y=Number(pt.dataset.cy);return x>=x1&&x<=x2&&y>=y1&&y<=y2;}).map(pt=>pt.dataset.recordId);store.setSelection(ids);}start=null;};
+  svg.addEventListener('pointerup',finish);svg.addEventListener('pointercancel',()=>{start=null;brush.setAttribute('visibility','hidden');});
+}
+
+fileInput.addEventListener('change',async()=>{const file=fileInput.files?.[0];if(!file)return;try{const text=await file.text();if(file.name.toLowerCase().endsWith('.json')){const data=JSON.parse(text);if(data.format==='investigation-canvas/v1')store.importState(data);else{const records=Array.isArray(data)?data:data.records;if(!Array.isArray(records))throw new Error('JSON must be an array of records or an Investigation Canvas export');store.loadCustomDataset(inferDataset(records,file.name.replace(/\.json$/i,'')));}}else{const records=parseCsv(text);if(!records.length)throw new Error('No CSV rows found');store.loadCustomDataset(inferDataset(records,file.name.replace(/\.csv$/i,'')));}toast(`Imported ${file.name}`);}catch(error){toast(`Import failed: ${error.message}`)}finally{fileInput.value='';}});
+
+document.addEventListener('keydown',ev=>{if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='z'){ev.preventDefault();ev.shiftKey?store.redo():store.undo();}if(ev.key==='Escape')closeModal();});
+
+store.subscribe(render);
+render();
+registerWebMcp(store);
+window.InvestigationCanvas={store,createWebMcpTools:()=>createWebMcpTools(store)};

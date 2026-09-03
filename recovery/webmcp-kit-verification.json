@@ -1,0 +1,212 @@
+{
+  "base_url": "http://127.0.0.1:4173/",
+  "console_errors": [],
+  "registered_count": 48,
+  "registered_tools": [
+    "add_causal_link",
+    "add_filter",
+    "annotate_workspace",
+    "arrange_canvas",
+    "attach_evidence_to_hypothesis",
+    "branch_investigation",
+    "clear_filters",
+    "clear_selection",
+    "compare_queries",
+    "compare_selection_to_rest",
+    "configure_view",
+    "create_canvas_view",
+    "create_finding",
+    "create_hypothesis",
+    "describe_workspace",
+    "find_counterevidence",
+    "find_outliers",
+    "focus_canvas_view",
+    "focus_evidence",
+    "focus_graph_node",
+    "focus_record",
+    "fork_hypothesis",
+    "get_activity_provenance",
+    "get_canvas_state",
+    "get_evidence",
+    "get_record",
+    "get_relationship_graph",
+    "get_selection",
+    "link_canvas_views",
+    "list_findings",
+    "list_hypotheses",
+    "list_records",
+    "list_rich_evidence",
+    "query_records",
+    "rank_correlations",
+    "rank_discriminating_features",
+    "remove_canvas_view",
+    "remove_filter",
+    "restore_analysis_view",
+    "restore_investigation_branch",
+    "save_analysis_view",
+    "search_evidence",
+    "select_where",
+    "set_record_search",
+    "set_selection",
+    "summarize_records",
+    "update_canvas_view",
+    "update_hypothesis"
+  ],
+  "summary": {
+    "could_not_verify": 0,
+    "failed": 0,
+    "verified": 48
+  },
+  "tool_results": {
+    "add_causal_link": {
+      "status": "verified"
+    },
+    "add_filter": {
+      "status": "verified"
+    },
+    "annotate_workspace": {
+      "status": "verified"
+    },
+    "arrange_canvas": {
+      "status": "verified"
+    },
+    "attach_evidence_to_hypothesis": {
+      "status": "verified"
+    },
+    "branch_investigation": {
+      "status": "verified"
+    },
+    "clear_filters": {
+      "status": "verified"
+    },
+    "clear_selection": {
+      "status": "verified"
+    },
+    "compare_queries": {
+      "status": "verified"
+    },
+    "compare_selection_to_rest": {
+      "status": "verified"
+    },
+    "configure_view": {
+      "status": "verified"
+    },
+    "create_canvas_view": {
+      "status": "verified"
+    },
+    "create_finding": {
+      "status": "verified"
+    },
+    "create_hypothesis": {
+      "status": "verified"
+    },
+    "describe_workspace": {
+      "status": "verified"
+    },
+    "find_counterevidence": {
+      "status": "verified"
+    },
+    "find_outliers": {
+      "status": "verified"
+    },
+    "focus_canvas_view": {
+      "status": "verified"
+    },
+    "focus_evidence": {
+      "status": "verified"
+    },
+    "focus_graph_node": {
+      "status": "verified"
+    },
+    "focus_record": {
+      "status": "verified"
+    },
+    "fork_hypothesis": {
+      "status": "verified"
+    },
+    "get_activity_provenance": {
+      "status": "verified"
+    },
+    "get_canvas_state": {
+      "status": "verified"
+    },
+    "get_evidence": {
+      "status": "verified"
+    },
+    "get_record": {
+      "status": "verified"
+    },
+    "get_relationship_graph": {
+      "status": "verified"
+    },
+    "get_selection": {
+      "status": "verified"
+    },
+    "link_canvas_views": {
+      "status": "verified"
+    },
+    "list_findings": {
+      "status": "verified"
+    },
+    "list_hypotheses": {
+      "status": "verified"
+    },
+    "list_records": {
+      "status": "verified"
+    },
+    "list_rich_evidence": {
+      "status": "verified"
+    },
+    "query_records": {
+      "status": "verified"
+    },
+    "rank_correlations": {
+      "status": "verified"
+    },
+    "rank_discriminating_features": {
+      "status": "verified"
+    },
+    "remove_canvas_view": {
+      "status": "verified"
+    },
+    "remove_filter": {
+      "status": "verified"
+    },
+    "restore_analysis_view": {
+      "status": "verified"
+    },
+    "restore_investigation_branch": {
+      "status": "verified"
+    },
+    "save_analysis_view": {
+      "status": "verified"
+    },
+    "search_evidence": {
+      "status": "verified"
+    },
+    "select_where": {
+      "status": "verified"
+    },
+    "set_record_search": {
+      "status": "verified"
+    },
+    "set_selection": {
+      "status": "verified"
+    },
+    "summarize_records": {
+      "status": "verified"
+    },
+    "update_canvas_view": {
+      "status": "verified"
+    },
+    "update_hypothesis": {
+      "status": "verified"
+    }
+  },
+  "ui_effects": {
+    "canvasViewVisible": true,
+    "filterChip": true,
+    "hypothesisVisible": true,
+    "selectionBanner": true
+  }
+}
