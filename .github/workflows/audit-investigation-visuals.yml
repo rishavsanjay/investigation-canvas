@@ -1,0 +1,179 @@
+name: Audit Investigation Canvas visuals
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/audit-investigation-visuals.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix-investigation-canvas-visuals
+          fetch-depth: 0
+
+      - name: Install Playwright
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+          CHROMIUM_PATH="$(python - <<'PY'
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              print(p.chromium.executable_path)
+          PY
+          )"
+          echo "CHROMIUM_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
+
+      - name: Boot app
+        run: |
+          cd investigation-canvas
+          python3 -m http.server 4173 >/tmp/investigation-canvas-server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Run layout audit and capture full tab suite
+        env:
+          CHROMIUM_PATH: ${{ env.CHROMIUM_PATH }}
+        run: |
+          cat >/tmp/layout_audit.py <<'PY'
+          import json, os
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+
+          out = Path('/tmp/visual-audit')
+          out.mkdir(exist_ok=True)
+          reports = []
+          tabs = ['explore','canvas','hypotheses','evidence','provenance']
+          viewports = [('desktop',1440,1000),('tablet',820,900),('mobile',390,844)]
+
+          JS = r'''() => {
+            const vw = innerWidth;
+            const visible = el => {
+              const s = getComputedStyle(el), r = el.getBoundingClientRect();
+              return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+            };
+            const scrollXAncestor = el => {
+              for (let p=el.parentElement; p; p=p.parentElement) {
+                const s=getComputedStyle(p);
+                if (['auto','scroll'].includes(s.overflowX) && p.scrollWidth > p.clientWidth + 1) return p;
+              }
+              return null;
+            };
+            const rect = el => { const r=el?.getBoundingClientRect(); return r ? {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height} : null; };
+            const issues=[];
+            if (document.documentElement.scrollWidth > vw + 1) issues.push({type:'page-horizontal-overflow', scrollWidth:document.documentElement.scrollWidth, viewport:vw});
+
+            document.querySelectorAll('button,input,select,textarea').forEach((el,i)=>{
+              if(!visible(el)) return;
+              const r=el.getBoundingClientRect();
+              if((r.left < -1 || r.right > vw + 1) && !scrollXAncestor(el) && !el.closest('.canvas-viewport')) {
+                issues.push({type:'interactive-offscreen', tag:el.tagName, id:el.id||null, cls:el.className||null, text:(el.innerText||el.value||'').slice(0,80), rect:rect(el)});
+              }
+            });
+
+            const top=document.querySelector('.topbar'), ctx=document.querySelector('.contextbar');
+            const tr=rect(top), cr=rect(ctx);
+            if(tr && cr && cr.top < tr.bottom - 1) issues.push({type:'sticky-overlap', topbarBottom:tr.bottom, contextTop:cr.top});
+
+            document.querySelectorAll('.card,.canvas-view,.chart-wrap svg,.graph-wrap svg').forEach(el=>{
+              if(visible(el)) { const r=el.getBoundingClientRect(); if(r.width < 2 || r.height < 2) issues.push({type:'zero-size', cls:el.className?.baseVal||el.className, rect:rect(el)}); }
+            });
+
+            document.querySelectorAll('.canvas-view').forEach(el=>{
+              if(!visible(el)) return;
+              const r=el.getBoundingClientRect();
+              if(vw <= 760 && (r.left < -1 || r.right > vw + 1)) issues.push({type:'mobile-canvas-offscreen', title:el.querySelector('strong')?.innerText, rect:rect(el)});
+            });
+
+            document.querySelectorAll('.map-pin span').forEach(el=>{
+              if(!visible(el)) return;
+              const r=el.getBoundingClientRect(), c=el.closest('.map-grid')?.getBoundingClientRect();
+              if(c && (r.left < c.left-1 || r.right > c.right+1 || r.top<c.top-1 || r.bottom>c.bottom+1)) issues.push({type:'map-label-clipped', text:el.innerText, rect:rect(el), container:{left:c.left,right:c.right,top:c.top,bottom:c.bottom}});
+            });
+
+            document.querySelectorAll('.image-box span').forEach(el=>{
+              if(!visible(el)) return;
+              const r=el.getBoundingClientRect(), c=el.closest('.image-placeholder')?.getBoundingClientRect();
+              if(c && (r.left < c.left-1 || r.right > c.right+1 || r.top<c.top-1 || r.bottom>c.bottom+1)) issues.push({type:'image-label-clipped', text:el.innerText, rect:rect(el), container:{left:c.left,right:c.right,top:c.top,bottom:c.bottom}});
+            });
+
+            const toolbar=document.querySelector('.canvas-toolbar');
+            const viewHead=document.querySelector('.canvas-view-head');
+            const toolbarBorder=toolbar?getComputedStyle(toolbar).borderTopWidth:null;
+            const viewHeadBorder=viewHead?getComputedStyle(viewHead).borderBottomWidth:null;
+            if(toolbar && toolbarBorder==='0px') issues.push({type:'missing-canvas-toolbar-border'});
+            if(viewHead && viewHeadBorder==='0px') issues.push({type:'missing-canvas-view-head-border'});
+
+            const signals=[...document.querySelectorAll('.card-title')].find(e=>e.textContent==='Investigation signals')?.closest('.card')?.querySelector('.card-body > div');
+            const sigCols=signals?getComputedStyle(signals).gridTemplateColumns:null;
+            if(vw <= 470 && signals && sigCols && sigCols.split(' ').length >= 3) issues.push({type:'mobile-signals-too-many-columns', gridTemplateColumns:sigCols, width:signals.getBoundingClientRect().width});
+
+            const evidenceSearch=document.querySelector('#evidence-search');
+            if(vw <= 470 && evidenceSearch) {
+              const r=evidenceSearch.getBoundingClientRect();
+              const parent=evidenceSearch.parentElement.getBoundingClientRect();
+              if(r.width > parent.width*.75 || r.left < parent.left || r.right > parent.right) issues.push({type:'mobile-evidence-header-cramped', search:rect(evidenceSearch), parent:{left:parent.left,right:parent.right,width:parent.width}});
+            }
+
+            return {
+              issues,
+              metrics:{viewportWidth:vw, documentScrollWidth:document.documentElement.scrollWidth, scrollHeight:document.documentElement.scrollHeight, topbar:tr, contextbar:cr, toolbarBorder, viewHeadBorder, canvasViews:document.querySelectorAll('.canvas-view').length, cards:document.querySelectorAll('.card').length}
+            };
+          }'''
+
+          with sync_playwright() as p:
+            browser=p.chromium.launch(headless=True, executable_path=os.environ['CHROMIUM_PATH'], args=['--no-sandbox'])
+            for name,w,h in viewports:
+              page=browser.new_page(viewport={'width':w,'height':h})
+              page.add_init_script("""
+                window.__registeredTools=[];
+                Object.defineProperty(document,'modelContext',{configurable:true,value:{registerTool:async t=>window.__registeredTools.push(t),getTools:async()=>window.__registeredTools}});
+              """)
+              page.goto('http://127.0.0.1:4173/', wait_until='networkidle')
+              for tab in tabs:
+                page.locator(f'[data-tab="{tab}"]').click()
+                page.wait_for_timeout(100)
+                if tab == 'evidence':
+                  # Exercise both rich image and map layouts.
+                  for doc_id, suffix in [('media-checkout-capture','image'),('media-checkout-map','map')]:
+                    loc=page.locator(f'[data-doc-id="{doc_id}"]')
+                    if loc.count():
+                      loc.click(); page.wait_for_timeout(80)
+                      r=page.evaluate(JS); r.update({'viewport':name,'tab':f'evidence-{suffix}'})
+                      reports.append(r)
+                      page.screenshot(path=str(out/f'{name}-evidence-{suffix}.png'), full_page=True)
+                  continue
+                r=page.evaluate(JS); r.update({'viewport':name,'tab':tab})
+                reports.append(r)
+                page.screenshot(path=str(out/f'{name}-{tab}.png'), full_page=True)
+              page.close()
+            browser.close()
+
+          print(json.dumps(reports, indent=2))
+          Path('/tmp/layout-audit.json').write_text(json.dumps(reports, indent=2))
+          severe=[(r['viewport'],r['tab'],i) for r in reports for i in r['issues']]
+          print(f'VISUAL_AUDIT_ISSUES={len(severe)}')
+          for v,t,i in severe: print(f'ISSUE {v}/{t}: {json.dumps(i, sort_keys=True)}')
+          PY
+          python /tmp/layout_audit.py
+
+      - name: Upload audit screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: investigation-visual-audit-${{ github.run_id }}
+          path: |
+            /tmp/layout-audit.json
+            /tmp/visual-audit/*.png
+          if-no-files-found: error
+          retention-days: 30
