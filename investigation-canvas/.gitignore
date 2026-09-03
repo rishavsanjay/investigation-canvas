@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+*.log
+assets/e2e-*.png
+assets/chromium.png

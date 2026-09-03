@@ -1,0 +1,36 @@
+Archive:  /tmp/investigation-canvas-original.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+        0  2026-09-02 18:51   investigation-canvas/
+     1090  2026-09-02 18:39   investigation-canvas/LICENSE
+        0  2026-09-02 18:50   investigation-canvas/tests/
+     2368  2026-09-02 18:50   investigation-canvas/tests/scenario.test.js
+     3357  2026-09-02 18:46   investigation-canvas/tests/store.test.js
+     3420  2026-09-02 18:46   investigation-canvas/tests/core.test.js
+     3889  2026-09-02 18:50   investigation-canvas/tests/webmcp.test.js
+     3778  2026-09-02 18:53   investigation-canvas/tests/e2e.py
+        0  2026-09-02 18:45   investigation-canvas/src/
+    18391  2026-09-02 18:40   investigation-canvas/src/sampleData.js
+    10729  2026-09-02 18:41   investigation-canvas/src/core.js
+    11484  2026-09-02 18:41   investigation-canvas/src/store.js
+    42778  2026-09-02 18:52   investigation-canvas/src/app.js
+    24781  2026-09-02 18:48   investigation-canvas/src/webmcp.js
+      910  2026-09-02 18:53   investigation-canvas/index.html
+      254  2026-09-02 18:50   investigation-canvas/vercel.json
+      543  2026-09-02 18:50   investigation-canvas/SECURITY.md
+    20399  2026-09-02 18:54   investigation-canvas/styles.css
+     6058  2026-09-02 18:56   investigation-canvas/README.md
+      204  2026-09-02 18:39   investigation-canvas/package.json
+        0  2026-09-02 18:56   investigation-canvas/assets/
+   245014  2026-09-02 18:56   investigation-canvas/assets/preview.png
+        0  2026-09-02 18:50   investigation-canvas/.github/
+        0  2026-09-02 18:50   investigation-canvas/.github/workflows/
+      224  2026-09-02 18:50   investigation-canvas/.github/workflows/test.yml
+      232  2026-09-02 18:50   investigation-canvas/netlify.toml
+        0  2026-09-02 18:50   investigation-canvas/docs/
+     2566  2026-09-02 18:50   investigation-canvas/docs/ARCHITECTURE.md
+     2768  2026-09-02 18:50   investigation-canvas/docs/SUBMISSION.md
+     1940  2026-09-02 18:50   investigation-canvas/docs/DEMO.md
+       67  2026-09-02 18:50   investigation-canvas/.gitignore
+---------                     -------
+   407244                     31 files
