@@ -14,12 +14,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: ci/visual/package-lock.json
 
       - name: Install browser harness
         working-directory: ci/visual
-        run: npm ci
+        run: npm install
 
       - name: Install Playwright Chromium
         working-directory: ci/visual
@@ -48,12 +46,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: ci/visual/package-lock.json
 
       - name: Install browser harness
         working-directory: ci/visual
-        run: npm ci
+        run: npm install
 
       - name: Install Playwright Chromium
         working-directory: ci/visual
