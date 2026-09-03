@@ -37,4 +37,4 @@ cd investigation-canvas
 npm test
 ```
 
-The repository-level GitHub Actions visual harness additionally drives the app with Playwright, captures multiple investigation states and mobile/desktop screenshots, checks rendering overflow/collisions, and audits the WebMCP registration surface.
+The repository-level GitHub Actions visual harness additionally drives the app with Playwright, captures multiple investigation states and mobile/desktop screenshots, checks rendering overflow/collisions, audits the WebMCP registration surface, and runs these source-level contract tests on every app PR.
