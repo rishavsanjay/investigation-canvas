@@ -120,6 +120,12 @@ A Playwright end-to-end test is included in `tests/e2e.py`. The recovery/verific
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Maintainer handover and development history
+
+See [docs/HANDOVER.md](docs/HANDOVER.md) for the authoritative branch/file map, runbook, release checklist, known limitations, and recovery-branch notes.
+
+See [docs/DEVLOG.md](docs/DEVLOG.md) for the chronological product/architecture/recovery/testing history and the rationale behind the major implementation decisions.
+
 ## Hackathon submission notes
 
 See [docs/SUBMISSION.md](docs/SUBMISSION.md) and [docs/DEMO.md](docs/DEMO.md).
