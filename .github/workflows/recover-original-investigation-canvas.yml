@@ -23,7 +23,7 @@ jobs:
 
       - name: Download exact preserved original archive
         env:
-          ORIGINAL_URL: "https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-6c2c-8211-8199-f94bcf0d74de/raw?se=2026-09-03T06%3A50%3A38Z&sp=r&sv=2026-02-06&sr=b&scid=e7080d8d-f93c-5577-bc2d-384fa1be366e&skoid=6fa9748a-b7b2-4b56-a932-8c1417549c47&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-03T04%3A00%3A19Z&ske=2026-09-04T04%3A00%3A19Z&sks=b&skv=2026-02-06&sig=rWpWhUL9RyvJlUyeTOIG6V%2Bjo0fhQKvujH1f2Wj9qAE%3D"
+          ORIGINAL_URL: "https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-6d3c-8211-89c0-48af3163c902/raw?se=2026-09-03T07%3A03%3A52Z&sp=r&sv=2026-02-06&sr=b&scid=1d8404f6-c447-56c4-93ea-8126acc5cbfb&skoid=6fa9748a-b7b2-4b56-a932-8c1417549c47&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-03T06%3A46%3A35Z&ske=2026-09-04T06%3A46%3A35Z&sks=b&skv=2026-02-06&sig=CI1qQO5gONMk6O5dtJQO74RbMg/soaTEBbRqTb32tLM%3D"
         run: |
           set -euo pipefail
           curl -fL --retry 3 "$ORIGINAL_URL" -o /tmp/investigation-canvas-original.zip
