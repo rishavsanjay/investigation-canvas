@@ -2,6 +2,8 @@ name: webmcp-chrome-cft
 on:
   push:
     branches: [webmcp-chrome-cft]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 jobs:
   fetch-chrome:
