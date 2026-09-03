@@ -39,23 +39,36 @@ jobs:
   investigation-canvas:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ hashFiles('investigation-canvas/index.html') != '' }}
     steps:
       - uses: actions/checkout@v4
 
+      - name: Detect Investigation Canvas source
+        id: app
+        run: |
+          if [ -f investigation-canvas/index.html ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No investigation-canvas/ checkout yet; app-specific visual job will be skipped."
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.app.outputs.present == 'true'
         with:
           node-version: 22
 
       - name: Install browser harness
+        if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
         run: npm install
 
       - name: Install Playwright Chromium
+        if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
         run: npx playwright install --with-deps chromium
 
       - name: Serve Investigation Canvas
+        if: steps.app.outputs.present == 'true'
         run: |
           python3 -m http.server 4173 --directory investigation-canvas > /tmp/investigation-canvas-http.log 2>&1 &
           echo $! > /tmp/investigation-canvas-http.pid
@@ -66,13 +79,14 @@ jobs:
           curl -fsS http://127.0.0.1:4173/ >/dev/null
 
       - name: Run multi-state visual/browser automation
+        if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
         env:
           BASE_URL: http://127.0.0.1:4173/
         run: node investigation-visual.mjs
 
       - name: Upload Investigation Canvas screenshots and diagnostics
-        if: always()
+        if: always() && steps.app.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: investigation-canvas-visual-${{ github.run_id }}
