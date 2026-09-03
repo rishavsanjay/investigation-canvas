@@ -10,23 +10,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install browser harness
         working-directory: ci/visual
         run: npm install
-
       - name: Install Playwright Chromium
         working-directory: ci/visual
         run: npx playwright install --with-deps chromium
-
       - name: Run harness self-test
         working-directory: ci/visual
         run: node visual-selftest.mjs
-
       - name: Upload harness screenshots and traces
         if: always()
         uses: actions/upload-artifact@v4
@@ -41,23 +36,19 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install harness and Chrome dependencies
         working-directory: ci/visual
         run: |
           npm install
           npx playwright install-deps chromium
-
       - name: Download Chrome for Testing 152
         run: |
           curl -fL --retry 3 -o /tmp/chrome.zip https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.75/linux64/chrome-linux64.zip
           unzip -q /tmp/chrome.zip -d /tmp/chrome-cft
           /tmp/chrome-cft/chrome-linux64/chrome --version
-
       - name: Serve native WebMCP probe fixture
         run: |
           python3 -m http.server 4174 --directory ci/visual/native-fixture > /tmp/native-webmcp-http.log 2>&1 &
@@ -66,14 +57,12 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:4174/ >/dev/null
-
       - name: Probe native document.modelContext and registerTool
         working-directory: ci/visual
         env:
           CHROME_PATH: /tmp/chrome-cft/chrome-linux64/chrome
           NATIVE_PROBE_URL: http://127.0.0.1:4174/
         run: node native-webmcp.mjs
-
       - name: Upload native WebMCP screenshots and report
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,7 +77,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
       - name: Detect Investigation Canvas source
         id: app
         run: |
@@ -98,22 +86,22 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "No investigation-canvas/ checkout yet; app-specific visual job will be skipped."
           fi
-
       - uses: actions/setup-node@v4
         if: steps.app.outputs.present == 'true'
         with:
           node-version: 22
-
+      - name: Run source contract tests
+        if: steps.app.outputs.present == 'true'
+        working-directory: investigation-canvas
+        run: npm test
       - name: Install browser harness
         if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
         run: npm install
-
       - name: Install Playwright Chromium
         if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
         run: npx playwright install --with-deps chromium
-
       - name: Serve Investigation Canvas
         if: steps.app.outputs.present == 'true'
         run: |
@@ -124,14 +112,12 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:4173/ >/dev/null
-
       - name: Run multi-state visual/browser automation
         if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
         env:
           BASE_URL: http://127.0.0.1:4173/
         run: node investigation-visual.mjs
-
       - name: Upload Investigation Canvas screenshots and diagnostics
         if: always() && steps.app.outputs.present == 'true'
         uses: actions/upload-artifact@v4
