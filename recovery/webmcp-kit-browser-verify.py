@@ -115,7 +115,7 @@ def main():
                 time: store.state.dimensions.time
               });
 
-              const evidenceQuery = String(firstDoc.title || firstDoc.source || 'evidence').split(/\s+/)[0];
+              const evidenceQuery = String(firstDoc.title || firstDoc.source || 'evidence').split(/\\s+/)[0];
               await run('search_evidence', { query: evidenceQuery });
               await run('get_evidence', { evidenceIds: [firstDoc.id] });
               await run('get_relationship_graph', {});

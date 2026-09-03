@@ -30,7 +30,14 @@ export function renderEvidenceMedia(doc) {
   if (!doc?.mediaType) return '';
   const media=doc.media||{};
   if(doc.mediaType==='image') return `<div class="evidence-media image-evidence"><div class="image-placeholder"><div class="image-grid"></div>${(media.boxes||[]).map(b=>`<div class="image-box" style="left:${b.x*100}%;top:${b.y*100}%;width:${b.w*100}%;height:${b.h*100}%"><span>${esc(b.label)}</span></div>`).join('')}<div class="image-caption">${esc(media.caption||doc.title)}</div></div></div>`;
-  if(doc.mediaType==='map') { const pts=media.points||[]; const lats=pts.map(p=>p.lat),lons=pts.map(p=>p.lon),minLat=Math.min(...lats,0),maxLat=Math.max(...lats,1),minLon=Math.min(...lons,0),maxLon=Math.max(...lons,1);return `<div class="evidence-media map-evidence"><div class="map-grid">${pts.map(p=>`<div class="map-pin" style="left:${10+(p.lon-minLon)/(maxLon-minLon||1)*80}%;top:${85-(p.lat-minLat)/(maxLat-minLat||1)*70}%"><i></i><span>${esc(p.label)} · ${esc(p.value)}</span></div>`).join('')}</div></div>`; }
+  if(doc.mediaType==='map') {
+    const pts=media.points||[];
+    if(!pts.length) return '<div class="canvas-empty">No map points</div>';
+    const lats=pts.map(p=>Number(p.lat)),lons=pts.map(p=>Number(p.lon));
+    const minLat=Math.min(...lats),maxLat=Math.max(...lats),minLon=Math.min(...lons),maxLon=Math.max(...lons);
+    const latSpan=(maxLat-minLat)||1,lonSpan=(maxLon-minLon)||1;
+    return `<div class="evidence-media map-evidence"><div class="map-grid">${pts.map(p=>{const px=10+(Number(p.lon)-minLon)/lonSpan*80,py=85-(Number(p.lat)-minLat)/latSpan*70;const edge=px>70?' edge-right':'';return `<div class="map-pin${edge}" style="left:${px}%;top:${py}%"><i></i><span>${esc(p.label)} · ${esc(p.value)}</span></div>`;}).join('')}</div></div>`;
+  }
   if(doc.mediaType==='log') return `<div class="evidence-media log-evidence">${(media.lines||[]).map((line,i)=>`<div><span>${String(i+1).padStart(2,'0')}</span><code>${esc(line)}</code></div>`).join('')}</div>`;
   return '';
 }
@@ -68,6 +75,9 @@ export function bindSpatialCanvasEvents(store) {
   document.querySelectorAll('[data-canvas-arrange]').forEach(b=>b.addEventListener('click',()=>store.arrangeCanvas(b.dataset.canvasArrange)));
   document.querySelectorAll('[data-canvas-zoom]').forEach(b=>b.addEventListener('click',()=>{const z=store.state.canvas.zoom+(b.dataset.canvasZoom==='in'?0.1:-0.1);store.setCanvasViewport({zoom:z});}));
   document.querySelector('#canvas-add-view')?.addEventListener('click',()=>{const type=prompt('View type: summary, selection, image, map, log, evidence, reasoning','summary');if(type)store.addCanvasView({type,title:`${label(type)} view`,content:type==='summary'?'New human-created analysis note':''});});
+
+  // Mobile is a stacked reading surface; do not mutate hidden desktop geometry from touch drags.
+  if (window.matchMedia('(max-width: 760px)').matches) return;
 
   document.querySelectorAll('.canvas-view-head').forEach(head=>head.addEventListener('pointerdown',ev=>{if(ev.target.closest('button'))return;const card=head.closest('.canvas-view'),id=card.dataset.canvasView,view=store.state.canvas.views.find(v=>v.id===id);if(!view)return;const sx=ev.clientX,sy=ev.clientY,ox=view.x,oy=view.y;let nx=ox,ny=oy;const move=e=>{nx=ox+(e.clientX-sx)/(store.state.canvas.zoom||1);ny=oy+(e.clientY-sy)/(store.state.canvas.zoom||1);card.style.left=`${nx}px`;card.style.top=`${ny}px`;};const up=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);store.updateCanvasView(id,{x:nx,y:ny},'human');};window.addEventListener('pointermove',move);window.addEventListener('pointerup',up,{once:true});}));
   document.querySelectorAll('[data-canvas-resize]').forEach(handle=>handle.addEventListener('pointerdown',ev=>{ev.stopPropagation();const card=handle.closest('.canvas-view'),id=handle.dataset.canvasResize,view=store.state.canvas.views.find(v=>v.id===id);if(!view)return;const sx=ev.clientX,sy=ev.clientY,ow=view.w,oh=view.h;let nw=ow,nh=oh;const move=e=>{nw=Math.max(240,ow+(e.clientX-sx)/(store.state.canvas.zoom||1));nh=Math.max(160,oh+(e.clientY-sy)/(store.state.canvas.zoom||1));card.style.width=`${nw}px`;card.style.height=`${nh}px`;};const up=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);store.updateCanvasView(id,{w:nw,h:nh},'human');};window.addEventListener('pointermove',move);window.addEventListener('pointerup',up,{once:true});}));
