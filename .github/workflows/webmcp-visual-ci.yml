@@ -1,0 +1,85 @@
+name: webmcp-visual-ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  browser-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ci/visual/package-lock.json
+
+      - name: Install browser harness
+        working-directory: ci/visual
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: ci/visual
+        run: npx playwright install --with-deps chromium
+
+      - name: Run harness self-test
+        working-directory: ci/visual
+        run: node visual-selftest.mjs
+
+      - name: Upload harness screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-harness-${{ github.run_id }}
+          path: ci/visual/artifacts
+          if-no-files-found: error
+          retention-days: 7
+
+  investigation-canvas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ hashFiles('investigation-canvas/index.html') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ci/visual/package-lock.json
+
+      - name: Install browser harness
+        working-directory: ci/visual
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: ci/visual
+        run: npx playwright install --with-deps chromium
+
+      - name: Serve Investigation Canvas
+        run: |
+          python3 -m http.server 4173 --directory investigation-canvas > /tmp/investigation-canvas-http.log 2>&1 &
+          echo $! > /tmp/investigation-canvas-http.pid
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+
+      - name: Run multi-state visual/browser automation
+        working-directory: ci/visual
+        env:
+          BASE_URL: http://127.0.0.1:4173/
+        run: node investigation-visual.mjs
+
+      - name: Upload Investigation Canvas screenshots and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: investigation-canvas-visual-${{ github.run_id }}
+          path: ci/visual/artifacts
+          if-no-files-found: error
+          retention-days: 14
