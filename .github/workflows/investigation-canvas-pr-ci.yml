@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -34,12 +34,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install playwright
           python -m playwright install --with-deps chromium
-          CHROMIUM_PATH="$(python - <<'PY'
-          from playwright.sync_api import sync_playwright
-          with sync_playwright() as p:
-              print(p.chromium.executable_path)
-          PY
-          )"
+          CHROMIUM_PATH="$(find "$HOME/.cache/ms-playwright" -type f -path '*/chrome-linux64/chrome' -print -quit)"
+          test -n "$CHROMIUM_PATH"
+          test -x "$CHROMIUM_PATH"
           echo "CHROMIUM_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
           sudo ln -sf "$CHROMIUM_PATH" /usr/bin/chromium
           sudo mkdir -p /mnt/data/investigation-canvas/assets
@@ -70,7 +67,7 @@ jobs:
 
       - name: Upload browser evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: investigation-canvas-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
           path: |
