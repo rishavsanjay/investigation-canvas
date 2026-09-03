@@ -1,0 +1,21 @@
+name: webmcp-chrome-cft
+on:
+  push:
+    branches: [webmcp-chrome-cft]
+  workflow_dispatch:
+jobs:
+  fetch-chrome:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Chrome for Testing 152
+        run: |
+          curl -fL --retry 3 -o chrome.zip https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.75/linux64/chrome-linux64.zip
+          unzip -q chrome.zip
+          ./chrome-linux64/chrome --version
+      - name: Upload Chrome artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-152-linux64
+          path: chrome-linux64
+          retention-days: 1
+          compression-level: 0
