@@ -36,6 +36,53 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  native-webmcp-chrome152:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install harness and Chrome dependencies
+        working-directory: ci/visual
+        run: |
+          npm install
+          npx playwright install-deps chromium
+
+      - name: Download Chrome for Testing 152
+        run: |
+          curl -fL --retry 3 -o /tmp/chrome.zip https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.75/linux64/chrome-linux64.zip
+          unzip -q /tmp/chrome.zip -d /tmp/chrome-cft
+          /tmp/chrome-cft/chrome-linux64/chrome --version
+
+      - name: Serve native WebMCP probe fixture
+        run: |
+          python3 -m http.server 4174 --directory ci/visual/native-fixture > /tmp/native-webmcp-http.log 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:4174/ >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4174/ >/dev/null
+
+      - name: Probe native document.modelContext and registerTool
+        working-directory: ci/visual
+        env:
+          CHROME_PATH: /tmp/chrome-cft/chrome-linux64/chrome
+          NATIVE_PROBE_URL: http://127.0.0.1:4174/
+        run: node native-webmcp.mjs
+
+      - name: Upload native WebMCP screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-webmcp-chrome152-${{ github.run_id }}
+          path: ci/visual/artifacts/native-webmcp
+          if-no-files-found: error
+          retention-days: 7
+
   investigation-canvas:
     runs-on: ubuntu-latest
     timeout-minutes: 20
