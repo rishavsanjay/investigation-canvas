@@ -278,6 +278,70 @@ export function inferDataset(records, title = 'Imported investigation') {
   };
 }
 
+
+// POST_ZIP_ENHANCEMENTS_V2: core
+const COUNTEREVIDENCE_STOPWORDS = new Set(['the','and','for','that','this','with','from','into','over','under','are','was','were','has','have','had','not','but','its','our','their','then','than','does','did','can','could','would','should','about','primary','caused','cause']);
+
+export function evidenceTerms(value) {
+  const text = Array.isArray(value) ? value.join(' ') : String(value ?? '');
+  return [...new Set((text.toLowerCase().match(/[a-z0-9][a-z0-9._-]{2,}/g) || [])
+    .filter((term) => !COUNTEREVIDENCE_STOPWORDS.has(term)))];
+}
+
+export function findCounterevidence(hypothesis, documents = [], limit = 8) {
+  if (!hypothesis) return [];
+  const terms = evidenceTerms([hypothesis.title, hypothesis.notes, ...(hypothesis.questions || [])]);
+  const already = new Set([...(hypothesis.supporting || []), ...(hypothesis.contradicting || [])]);
+  return documents
+    .filter((doc) => !already.has(doc.id))
+    .map((doc) => {
+      const haystack = [doc.title, doc.type, doc.source, doc.text, ...(doc.tags || [])].join(' ').toLowerCase();
+      const matchedTerms = terms.filter((term) => haystack.includes(term));
+      const negationBonus = /normal|baseline|unchanged|independent|ruled out|no evidence|did not|does not|without/.test(haystack) ? 1.5 : 0;
+      return { document: doc, score: matchedTerms.length + negationBonus, matchedTerms };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || String(a.document.id).localeCompare(String(b.document.id)))
+    .slice(0, limit);
+}
+
+export function rankCategoricalConcentration(records, fields = []) {
+  return fields.map((field) => {
+    const counts = groupCounts(records, field);
+    const top = counts[0] || { value: '∅', count: 0 };
+    const share = records.length ? top.count / records.length : 0;
+    const entropy = counts.reduce((sum, item) => {
+      const p = records.length ? item.count / records.length : 0;
+      return p ? sum - p * Math.log2(p) : sum;
+    }, 0);
+    return { field, topValue: top.value, topCount: top.count, share, entropy, distinct: counts.length };
+  }).sort((a, b) => b.share - a.share || a.entropy - b.entropy);
+}
+
+export function buildReasoningGraph(hypotheses = [], documents = [], findings = [], causalLinks = []) {
+  const nodes = [];
+  const edges = [];
+  const seen = new Set();
+  const addNode = (node) => { if (!seen.has(node.id)) { seen.add(node.id); nodes.push(node); } };
+  for (const h of hypotheses) {
+    addNode({ id: h.id, label: h.title, type: 'hypothesis', confidence: h.confidence, status: h.status });
+    if (h.parentId) edges.push({ source: h.parentId, target: h.id, label: h.forkReason || 'alternative' });
+    for (const id of h.supporting || []) {
+      const d = documents.find((x) => x.id === id);
+      addNode({ id, label: d?.title || id, type: 'evidence', stance: 'supporting' });
+      edges.push({ source: id, target: h.id, label: 'supports' });
+    }
+    for (const id of h.contradicting || []) {
+      const d = documents.find((x) => x.id === id);
+      addNode({ id, label: d?.title || id, type: 'evidence', stance: 'contradicting' });
+      edges.push({ source: id, target: h.id, label: 'contradicts' });
+    }
+  }
+  for (const f of findings) addNode({ id: f.id, label: f.title || f.text, type: 'finding', confidence: f.confidence });
+  for (const link of causalLinks) edges.push({ source: link.source, target: link.target, label: link.label || 'leads to', kind: 'causal' });
+  return { nodes, edges };
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')

@@ -345,7 +345,44 @@ function buildFraudRing() {
   };
 }
 
-export const SAMPLE_DATASETS = [buildCheckoutRegression(), buildModelRegression(), buildFraudRing()];
+
+// POST_ZIP_ENHANCEMENTS_V2: rich evidence
+function richEvidenceFor(datasetId) {
+  const common = (id, title, type, source, timestamp, trust, tags, text, mediaType, media) => ({ id, title, type, source, timestamp, trust, tags, text, mediaType, media });
+  if (datasetId === 'checkout-regression') return [
+    common('media-checkout-capture', 'Checkout retry capture', 'screen-capture', 'QA reproduction', '2026-09-10T09:12:00Z', 'internal', ['Safari 20.2','checkout-ui'], 'Annotated capture of the mobile checkout state after the completion event is missed.', 'image', { caption: 'Safari 20.2 reproduction — Pay button returns to idle after retry', width: 640, height: 360, boxes: [{ x: 0.57, y: 0.67, w: 0.26, h: 0.14, label: 'retry state' }, { x: 0.12, y: 0.18, w: 0.38, h: 0.11, label: 'web-4.7.2' }] }),
+    common('media-checkout-map', 'Affected session geography', 'geo-snapshot', 'Telemetry', '2026-09-10T10:00:00Z', 'internal', ['mobile','sessions'], 'Representative affected session clusters; issue is cross-region rather than localized.', 'map', { points: [{ lat: 37.77, lon: -122.42, label: 'NA', value: 82 }, { lat: 51.51, lon: -0.13, label: 'EU', value: 74 }, { lat: 1.35, lon: 103.82, label: 'APAC', value: 91 }, { lat: -23.55, lon: -46.63, label: 'LATAM', value: 63 }] }),
+    common('media-checkout-log', 'Checkout retry log stream', 'log-stream', 'Frontend telemetry', '2026-09-10T09:15:00Z', 'untrusted', ['Safari 20.2','retry'], 'Raw client telemetry excerpts around the failed completion event.', 'log', { lines: ['09:14:31.044 submit:start browser=Safari20.2','09:14:31.281 completion:event_missed attempt=1','09:14:31.812 retry:fallback attempt=2','09:14:32.103 ui:unlock reason=timeout','09:14:35.440 submit:start attempt=3'] })
+  ];
+  if (datasetId === 'model-regression') return [
+    common('media-model-capture', 'Failure gallery sample', 'image-review', 'Model quality team', '2026-08-31T16:10:00Z', 'internal', ['dataset-v7','crop'], 'Representative image showing object truncation under center-0.80.', 'image', { caption: 'Failure sample — object clipped by aggressive crop', width: 640, height: 420, boxes: [{ x: 0.05, y: 0.08, w: 0.74, h: 0.82, label: 'expected object' }, { x: 0.18, y: 0.15, w: 0.54, h: 0.67, label: 'visible crop' }] }),
+    common('media-model-map', 'Training region distribution', 'geo-snapshot', 'Training platform', '2026-08-31T18:00:00Z', 'internal', ['training','region'], 'Bad crop jobs are present in every compute region, weakening a region-specific hardware explanation.', 'map', { points: [{ lat: 41.2, lon: -96.0, label: 'us-central', value: 151 }, { lat: 50.1, lon: 8.7, label: 'europe-west', value: 137 }, { lat: 35.7, lon: 139.7, label: 'asia-east', value: 132 }] }),
+    common('media-model-log', 'Training launch template diff log', 'log-stream', 'Training platform', '2026-08-30T09:04:00Z', 'internal', ['dataset-v7','launch-template'], 'Launch audit showing the stale crop parameter entering v7 jobs.', 'log', { lines: ['template=v7-default crop=center-0.95','override source=legacy-launcher crop=center-0.80','job_count=61 inherited_override=true','validation_warning=crop_delta ignored=false'] })
+  ];
+  return [
+    common('media-fraud-capture', 'Device fingerprint comparison', 'forensic-capture', 'Fraud analyst', '2026-08-29T10:25:00Z', 'internal', ['dev-A12','dev-B77'], 'Side-by-side fingerprint feature capture showing rare shared rendering characteristics.', 'image', { caption: 'Fingerprint overlap — rare canvas and font signature', width: 640, height: 360, boxes: [{ x: 0.08, y: 0.18, w: 0.35, h: 0.62, label: 'dev-A12' }, { x: 0.57, y: 0.18, w: 0.35, h: 0.62, label: 'dev-B77' }] }),
+    common('media-fraud-map', 'Merchant/device network geography', 'geo-snapshot', 'Risk operations', '2026-08-30T14:45:00Z', 'internal', ['SG','AE','devices'], 'Transaction clusters associated with the two device identities and linked merchants.', 'map', { points: [{ lat: 1.35, lon: 103.82, label: 'SG cluster', value: 118 }, { lat: 25.20, lon: 55.27, label: 'AE cluster', value: 104 }, { lat: 12.97, lon: 77.59, label: 'IN background', value: 31 }] }),
+    common('media-fraud-log', 'Device rotation event stream', 'log-stream', 'Risk telemetry', '2026-08-30T14:50:00Z', 'untrusted', ['dev-A12','dev-B77','ASN'], 'Raw event excerpts connecting device identities to the shared hosting network.', 'log', { lines: ['14:42:10 dev-A12 asn=AS64531 merchant=Northstar','14:43:52 dev-B77 asn=AS64531 merchant=Vertex','14:47:03 dev-A12 fingerprint=9fb2 velocity=11.2','14:51:09 dev-B77 fingerprint=9fb2 velocity=10.7'] })
+  ];
+}
+
+function enrichDataset(dataset) {
+  const media = richEvidenceFor(dataset.id);
+  const starterFindings = dataset.id === 'checkout-regression'
+    ? [{ id: 'finding-release', title: 'Primary release boundary', text: 'The largest conversion break aligns with web-4.7.2 on Safari 20.2 mobile traffic.', confidence: 84, evidenceIds: ['doc-release-472','doc-support-safari'] }]
+    : dataset.id === 'model-regression'
+      ? [{ id: 'finding-crop', title: 'Crop-driven quality loss', text: 'center-0.80 accounts for the dominant dataset-v7 quality regression.', confidence: 81, evidenceIds: ['doc-dsv7','doc-label-review'] }]
+      : [{ id: 'finding-device', title: 'Shared device control signal', text: 'dev-A12 and dev-B77 share rare fingerprint and hosting features across linked merchants.', confidence: 74, evidenceIds: ['doc-device','doc-merchant'] }];
+  const starterCausalLinks = dataset.id === 'checkout-regression'
+    ? [{ id: 'cause-release-errors', source: 'n-web472', target: 'n-errors', label: 'introduced retry failure', confidence: 78 }, { id: 'cause-errors-conv', source: 'n-errors', target: 'n-conv', label: 'drives abandonment', confidence: 82 }]
+    : dataset.id === 'model-regression'
+      ? [{ id: 'cause-crop-trunc', source: 'n-crop80', target: 'n-trunc', label: 'clips objects', confidence: 88 }, { id: 'cause-trunc-acc', source: 'n-trunc', target: 'n-acc', label: 'reduces accuracy', confidence: 86 }]
+      : [{ id: 'cause-host-ring', source: 'n-host', target: 'n-risk', label: 'connects device cluster', confidence: 69 }];
+  return { ...dataset, documents: [...dataset.documents, ...media], starterFindings, starterCausalLinks };
+}
+
+const BASE_DATASETS = [buildCheckoutRegression(), buildModelRegression(), buildFraudRing()];
+export const SAMPLE_DATASETS = BASE_DATASETS.map(enrichDataset);
 
 export function cloneDataset(dataset) {
   return JSON.parse(JSON.stringify(dataset));

@@ -41,7 +41,7 @@ The project uses the current imperative WebMCP API and tool annotations, includi
   - suspicious transaction network
 - Responsive layout for smaller screens
 - No runtime dependencies and no build step
-- 35 WebMCP tools spanning reading, analysis, shared attention, evidence, hypotheses, graph navigation, view control, branching, and provenance
+- 48 WebMCP tools spanning reading, analysis, shared attention, evidence, hypotheses, graph navigation, view control, branching, and provenance
 
 ## WebMCP tool surface
 
@@ -118,3 +118,16 @@ See [docs/SUBMISSION.md](docs/SUBMISSION.md) and [docs/DEMO.md](docs/DEMO.md).
 ## License
 
 MIT.
+
+
+## Post-baseline investigation canvas
+
+The original 2026-09-02 baseline is preserved byte-for-byte in git history. A separate enhancement commit adds the features developed afterward:
+
+- freeform spatial canvas with movable/resizable linked views, pan/zoom, grid and true focused-view layouts
+- agent-created summary/analysis views that remain visible as investigation artifacts
+- image-style captures, geospatial evidence, and log-stream evidence in every built-in scenario
+- first-class hypothesis forks and explicit counterevidence discovery
+- persistent findings and causal links rendered as a reasoning graph
+- 13 additional WebMCP tools for canvas manipulation, rich evidence, findings, causal reasoning, forks, and counterevidence
+- expanded regression tests covering the enhanced state model and WebMCP contract
