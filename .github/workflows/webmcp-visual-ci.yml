@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
       - name: Install browser harness
@@ -24,7 +24,7 @@ jobs:
         run: node visual-selftest.mjs
       - name: Upload harness screenshots and traces
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: visual-harness-${{ github.run_id }}
           path: ci/visual/artifacts
@@ -35,8 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
       - name: Install harness and Chrome dependencies
@@ -65,7 +65,7 @@ jobs:
         run: node native-webmcp.mjs
       - name: Upload native WebMCP screenshots and report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: native-webmcp-chrome152-${{ github.run_id }}
           path: ci/visual/artifacts/native-webmcp
@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - name: Detect Investigation Canvas source
         id: app
         run: |
@@ -86,7 +86,7 @@ jobs:
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "No investigation-canvas/ checkout yet; app-specific visual job will be skipped."
           fi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         if: steps.app.outputs.present == 'true'
         with:
           node-version: 22
@@ -120,7 +120,7 @@ jobs:
         run: node investigation-visual.mjs
       - name: Upload Investigation Canvas screenshots and diagnostics
         if: always() && steps.app.outputs.present == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: investigation-canvas-visual-${{ github.run_id }}
           path: ci/visual/artifacts
