@@ -1,0 +1,99 @@
+name: recover-original-investigation-canvas
+
+on:
+  push:
+    branches: [recover-original-investigation-canvas]
+    paths: [.github/workflows/recover-original-investigation-canvas.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: recover-original-investigation-canvas
+          fetch-depth: 0
+
+      - name: Download exact preserved original archive
+        env:
+          ORIGINAL_URL: "https://sdmntprindiasocentral.oaiusercontent.com/files/00000000-6c2c-8211-8199-f94bcf0d74de/raw?se=2026-09-03T06%3A50%3A38Z&sp=r&sv=2026-02-06&sr=b&scid=e7080d8d-f93c-5577-bc2d-384fa1be366e&skoid=6fa9748a-b7b2-4b56-a932-8c1417549c47&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-09-03T04%3A00%3A19Z&ske=2026-09-04T04%3A00%3A19Z&sks=b&skv=2026-02-06&sig=rWpWhUL9RyvJlUyeTOIG6V%2Bjo0fhQKvujH1f2Wj9qAE%3D"
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 "$ORIGINAL_URL" -o /tmp/investigation-canvas-original.zip
+          test "$(stat -c %s /tmp/investigation-canvas-original.zip)" = "293610"
+          unzip -t /tmp/investigation-canvas-original.zip
+
+      - name: Extract, hash, and diff original tree
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/original /tmp/recovery-report
+          mkdir -p /tmp/original /tmp/recovery-report
+          unzip -q /tmp/investigation-canvas-original.zip -d /tmp/original
+          sha256sum /tmp/investigation-canvas-original.zip | tee /tmp/recovery-report/original-zip.sha256
+          unzip -l /tmp/investigation-canvas-original.zip > /tmp/recovery-report/archive-listing.txt
+
+          if [ -f /tmp/original/investigation-canvas/index.html ]; then
+            SRC=/tmp/original/investigation-canvas
+          elif [ -f /tmp/original/index.html ]; then
+            SRC=/tmp/original
+          else
+            INDEX="$(find /tmp/original -type f -name index.html -print -quit)"
+            test -n "$INDEX"
+            SRC="$(dirname "$INDEX")"
+          fi
+          echo "$SRC" | tee /tmp/recovery-report/detected-source-root.txt
+
+          (cd "$SRC" && find . -type f -not -path './.git/*' -print0 | sort -z | xargs -0 sha256sum) > /tmp/recovery-report/original-manifest.sha256
+          if [ -d investigation-canvas ]; then
+            (cd investigation-canvas && find . -type f -not -path './.git/*' -print0 | sort -z | xargs -0 sha256sum) > /tmp/recovery-report/reconstructed-manifest.sha256
+            diff -ruN --exclude=.git "$SRC" investigation-canvas > /tmp/recovery-report/original-vs-reconstructed.diff || true
+          fi
+          echo "Original files: $(wc -l < /tmp/recovery-report/original-manifest.sha256)"
+          echo "Reconstructed files: $(wc -l < /tmp/recovery-report/reconstructed-manifest.sha256 2>/dev/null || echo 0)"
+          echo "Diff lines: $(wc -l < /tmp/recovery-report/original-vs-reconstructed.diff 2>/dev/null || echo 0)"
+
+      - name: Upload immutable recovery evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: investigation-canvas-original-recovery-evidence-${{ github.run_id }}
+          path: |
+            /tmp/investigation-canvas-original.zip
+            /tmp/recovery-report
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Restore exact original source tree on recovery branch
+        run: |
+          set -euo pipefail
+          SRC="$(cat /tmp/recovery-report/detected-source-root.txt)"
+          rm -rf investigation-canvas
+          mkdir -p investigation-canvas
+          rsync -a --exclude='.git/' "$SRC"/ investigation-canvas/
+
+          # Verify every extracted source file matches after copy.
+          (cd investigation-canvas && find . -type f -not -path './.git/*' -print0 | sort -z | xargs -0 sha256sum) > /tmp/recovery-report/restored-manifest.sha256
+          diff -u /tmp/recovery-report/original-manifest.sha256 /tmp/recovery-report/restored-manifest.sha256
+
+          mkdir -p recovery/investigation-canvas-original
+          cp /tmp/recovery-report/original-zip.sha256 recovery/investigation-canvas-original/
+          cp /tmp/recovery-report/original-manifest.sha256 recovery/investigation-canvas-original/
+          cp /tmp/recovery-report/archive-listing.txt recovery/investigation-canvas-original/
+          cp /tmp/recovery-report/original-vs-reconstructed.diff recovery/investigation-canvas-original/
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A investigation-canvas recovery/investigation-canvas-original
+          git commit -m "Restore exact original Investigation Canvas baseline"
+          git push origin HEAD:recover-original-investigation-canvas
+
+      - name: Run original project tests if available
+        run: |
+          set -euo pipefail
+          if [ -f investigation-canvas/package.json ]; then
+            cd investigation-canvas
+            npm test
+          fi
