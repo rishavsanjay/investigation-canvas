@@ -1,7 +1,8 @@
 import { deepClone, filterRecords, findCounterevidence } from './core.js';
 import { SAMPLE_DATASETS, cloneDataset } from './sampleData.js';
 
-const STORAGE_KEY = 'investigation-canvas-state-v1';
+export const STORAGE_KEY = 'investigation-canvas-state-v1';
+export const DEMO_STORAGE_KEY = 'investigation-canvas-demo-session-v1';
 const FILTER_OPS = new Set(['eq', 'neq', 'contains', 'gt', 'gte', 'lt', 'lte', 'between', 'in']);
 const MAX_PERSISTABLE_CUSTOM_RECORDS = 500;
 const MAX_PERSISTABLE_CUSTOM_CHARS = 250_000;
@@ -217,16 +218,24 @@ function initialState(dataset = cloneDataset(SAMPLE_DATASETS[0])) {
 }
 
 export class InvestigationStore {
-  constructor() {
+  constructor(options = {}) {
     this.listeners = new Set();
     this.undoStack = [];
     this.redoStack = [];
     this._visibleRecordsCache = null;
     this._cachedCustomDatasetRef = null;
     this._cachedCustomDatasetJson = null;
+    this._storageKey = options.storageKey || STORAGE_KEY;
+    this._isolated = Boolean(options.isolated);
     this.state = initialState();
     this.loadPersisted();
     ensureEnhancedState(this.state);
+  }
+
+  isolateForDemo() {
+    this._isolated = true;
+    this._storageKey = DEMO_STORAGE_KEY;
+    return this;
   }
 
   subscribe(listener) {
@@ -686,8 +695,20 @@ export class InvestigationStore {
     try {
       const dataset = this.state.dataset;
       const custom = isCustomDataset(dataset);
+      const storageKey = this._storageKey || STORAGE_KEY;
+      if (this._isolated) {
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            const workspaceJson = JSON.stringify(serializeWorkspace(this.state));
+            const sampleIdJson = JSON.stringify(dataset?.id || null);
+            sessionStorage.setItem(storageKey, `{"datasetId":${sampleIdJson},"customDataset":null,"workspace":${workspaceJson}}`);
+          }
+        } catch (_) {}
+        this.state.persistence = { ok: true, lastError: null };
+        return true;
+      }
       if (custom && this._isLargeCustomDataset(dataset)) {
-        try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+        try { localStorage.removeItem(storageKey); } catch (_) {}
         this.state.persistence = {
           ok: false,
           lastError: 'Large dataset is session-only; workspace changes are not persisted to browser storage'
@@ -703,7 +724,7 @@ export class InvestigationStore {
         const sampleIdJson = JSON.stringify(dataset?.id || null);
         payloadJson = `{"datasetId":${sampleIdJson},"customDataset":null,"workspace":${workspaceJson}}`;
       }
-      localStorage.setItem(STORAGE_KEY, payloadJson);
+      localStorage.setItem(storageKey, payloadJson);
       this.state.persistence = { ok: true, lastError: null };
       return true;
     } catch (error) {
@@ -714,14 +735,24 @@ export class InvestigationStore {
 
   loadPersisted() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const storageKey = this._storageKey || STORAGE_KEY;
+      const raw = this._isolated
+        ? (typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(storageKey) : null)
+        : (typeof localStorage !== 'undefined' ? localStorage.getItem(storageKey) : null);
       if (!raw) return;
       const payload = JSON.parse(raw);
       const dataset = sanitizeDataset(payload.customDataset || cloneDataset(SAMPLE_DATASETS.find((d) => d.id === payload.datasetId) || SAMPLE_DATASETS[0]));
       const runtime = { datasets: this.state.datasets, webmcp: this.state.webmcp, persistence: this.state.persistence };
       this.state = { ...sanitizeWorkspace(payload.workspace, dataset), dataset, ...runtime };
     } catch (error) {
-      try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* ignore storage cleanup failure */ }
+      try {
+        const storageKey = this._storageKey || STORAGE_KEY;
+        if (this._isolated && typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem(storageKey);
+        } else if (typeof localStorage !== 'undefined') {
+          localStorage.removeItem(storageKey);
+        }
+      } catch (_) { /* ignore storage cleanup failure */ }
       this.state = initialState();
       this.state.persistence = { ok: false, lastError: `Recovered from invalid saved state: ${error?.message || 'unknown error'}` };
     }

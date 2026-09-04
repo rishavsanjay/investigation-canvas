@@ -48,6 +48,29 @@ export const TOOL_GROUPS = [
   }
 ];
 
+export const HUMAN_OUTCOMES = [
+  {
+    title: 'Understand the dataset',
+    description: 'Orient across records, inspect schema, and establish baseline patterns.'
+  },
+  {
+    title: 'Compare suspicious groups',
+    description: 'Isolate cohorts with visual selections and compute statistical deltas.'
+  },
+  {
+    title: 'Inspect trusted evidence',
+    description: 'Search documents, verify source material, and uncover counterevidence.'
+  },
+  {
+    title: 'Test competing explanations',
+    description: 'Formulate hypotheses, track confidence, and record structured findings.'
+  },
+  {
+    title: 'Preserve findings and history',
+    description: 'Capture spatial canvas artifacts and maintain an auditable provenance trail.'
+  }
+];
+
 let demoPaused = false;
 let currentRunId = 0;
 
@@ -157,9 +180,140 @@ export function formatSemanticInput(toolName, input) {
   }
 }
 
-export function summarizeToolResult(result) {
+export function summarizeToolResult(result, toolName = '', input = {}, store = null) {
   if (result == null) return 'Completed with no payload';
   if (typeof result !== 'object') return String(result);
+
+  // 1. describe_workspace: record, evidence doc, and hypothesis counts
+  if (toolName === 'describe_workspace' || (result.records && result.hypotheses && result.documents)) {
+    const recCount = result.records?.total ?? result.records?.visible ?? store?.state?.dataset?.records?.length ?? 0;
+    const docCount = result.documents?.length ?? store?.state?.dataset?.documents?.length ?? 0;
+    const hypCount = result.hypotheses?.length ?? store?.state?.hypotheses?.length ?? 0;
+    return `Workspace ready: ${recCount} records, ${docCount} evidence sources, ${hypCount} hypotheses`;
+  }
+
+  // 2. compare_selection_to_rest: conversion and latency deltas when present
+  if (toolName === 'compare_selection_to_rest' || (result.numeric && (result.count != null || result.total != null))) {
+    const numeric = Array.isArray(result.numeric) ? result.numeric : [];
+    const conv = numeric.find((m) => m.field === 'conversion');
+    const lat = numeric.find((m) => m.field === 'latency');
+    const parts = [];
+    if (conv && Number.isFinite(conv.delta)) {
+      parts.push(`conversion ${conv.delta > 0 ? '+' : ''}${conv.delta.toFixed(2)}%`);
+    }
+    if (lat && Number.isFinite(lat.delta)) {
+      parts.push(`latency ${lat.delta > 0 ? '+' : ''}${Math.round(lat.delta)}ms`);
+    }
+    if (parts.length > 0) {
+      return `Cohort delta: ${parts.join(', ')} vs baseline`;
+    }
+    if (numeric.length > 0) {
+      return `Evaluated ${numeric.length} numeric metrics vs baseline`;
+    }
+    return 'Calculated cohort comparison vs baseline';
+  }
+
+  // 3. focus_evidence: names the opened document
+  if (toolName === 'focus_evidence' || (!toolName && result.evidenceId)) {
+    const evId = result.evidenceId || input.evidenceId;
+    let docTitle = '';
+    if (store?.state?.dataset?.documents) {
+      const doc = store.state.dataset.documents.find((d) => d.id === evId);
+      if (doc) docTitle = doc.title;
+    }
+    return docTitle ? `Opened document: "${docTitle}" (${evId})` : `Opened document: ${evId}`;
+  }
+
+  // 4. search_evidence: matching evidence titles/count
+  if (toolName === 'search_evidence' || Array.isArray(result.documents)) {
+    const docs = Array.isArray(result.documents) ? result.documents : [];
+    if (docs.length === 0) {
+      return `No evidence documents matched query "${input.query || ''}"`;
+    }
+    const titles = docs.map((d) => `"${d.title}"`).slice(0, 2).join(', ');
+    const more = docs.length > 2 ? ` (+${docs.length - 2} more)` : '';
+    return `Found ${docs.length} matching document${docs.length === 1 ? '' : 's'}: ${titles}${more}`;
+  }
+
+  // 5. select_where: cohort size
+  if (toolName === 'select_where') {
+    const count = Number.isFinite(result.selected) ? result.selected : (Array.isArray(result.recordIds) ? result.recordIds.length : 0);
+    return `Selected cohort: ${count} records`;
+  }
+
+  // 6. get_selection: cohort size
+  if (toolName === 'get_selection') {
+    const count = Number.isFinite(result.count) ? result.count : (Array.isArray(result.recordIds) ? result.recordIds.length : 0);
+    return `Active selection: ${count} records`;
+  }
+
+  // 7. update_hypothesis: states what changed
+  if (toolName === 'update_hypothesis') {
+    let hypTitle = input.hypothesisId || '';
+    if (store?.state?.hypotheses) {
+      const h = store.state.hypotheses.find((item) => item.id === input.hypothesisId);
+      if (h) hypTitle = h.title;
+    }
+    return `Updated hypothesis "${hypTitle}": ${input.status || 'testing'} (${input.confidence ?? 50}% confidence)`;
+  }
+
+  // 8. attach_evidence_to_hypothesis: states what changed
+  if (toolName === 'attach_evidence_to_hypothesis') {
+    let hypTitle = input.hypothesisId || '';
+    let docTitle = input.evidenceId || '';
+    if (store?.state?.hypotheses) {
+      const h = store.state.hypotheses.find((item) => item.id === input.hypothesisId);
+      if (h) hypTitle = h.title;
+    }
+    if (store?.state?.dataset?.documents) {
+      const doc = store.state.dataset.documents.find((d) => d.id === input.evidenceId);
+      if (doc) docTitle = doc.title;
+    }
+    return `Attached "${docTitle}" as ${input.stance || 'supporting'} evidence to "${hypTitle}"`;
+  }
+
+  // 9. fork_hypothesis: states what changed
+  if (toolName === 'fork_hypothesis') {
+    const title = result.title || input.title || 'alternative hypothesis';
+    const conf = result.confidence ?? input.confidence ?? 80;
+    return `Forked hypothesis: "${title}" (${conf}% confidence)`;
+  }
+
+  // 10. create_finding: states what changed
+  if (toolName === 'create_finding') {
+    const title = result.title || input.title || 'finding';
+    const conf = result.confidence ?? input.confidence ?? 80;
+    return `Recorded finding: "${title}" (${conf}% confidence)`;
+  }
+
+  // 11. create_canvas_view: states what changed
+  if (toolName === 'create_canvas_view') {
+    const viewTitle = result.title || input.title || 'analysis view';
+    return `Created ${input.type || 'analysis'} canvas view: "${viewTitle}"`;
+  }
+
+  // 12. focus_canvas_view: states what changed
+  if (toolName === 'focus_canvas_view') {
+    const viewId = result.focusedViewId || input.viewId;
+    let viewTitle = viewId;
+    if (store?.state?.canvas?.views) {
+      const v = store.state.canvas.views.find((view) => view.id === viewId);
+      if (v) viewTitle = v.title;
+    }
+    return `Focused canvas view: "${viewTitle}"`;
+  }
+
+  // 13. add_causal_link
+  if (toolName === 'add_causal_link') {
+    return `Established causal link: ${input.source} --[${input.label || 'explains'}]--> ${input.target}`;
+  }
+
+  // 14. get_activity_provenance
+  if (toolName === 'get_activity_provenance') {
+    const count = Array.isArray(result.activity) ? result.activity.length : (store?.state?.activity?.length ?? 0);
+    return `Audited provenance trail: ${count} actions recorded`;
+  }
+
   if (Number.isFinite(result.selected)) return `Selected ${result.selected} records`;
   if (Number.isFinite(result.count)) return `Returned ${result.count} records`;
   if (result.title) return `Created or updated: ${result.title}`;
@@ -181,8 +335,31 @@ export function createDemoOverlay() {
     overlay.setAttribute('role', 'region');
     overlay.setAttribute('aria-label', 'Demo conversation');
     document.body.appendChild(overlay);
+    document.body.classList.add('demo-mode');
   }
   return overlay;
+}
+
+export function cleanupDemo() {
+  if (typeof document === 'undefined') return;
+  document.body.classList.remove('demo-mode');
+  document.body.classList.remove('demo-active-focus');
+  const overlay = document.getElementById('demo-overlay');
+  if (overlay) overlay.remove();
+  const cursor = document.getElementById('demo-cursor');
+  if (cursor) cursor.remove();
+}
+
+export function restorePreDemoWorkspace() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const snapshot = sessionStorage.getItem('investigation-canvas-pre-demo-snapshot');
+      if (snapshot !== null) {
+        localStorage.setItem('investigation-canvas-state-v1', snapshot);
+      }
+    }
+  } catch (_) {}
 }
 
 export function createDemoCursor() {
@@ -256,36 +433,21 @@ function bindPanelControls(overlay) {
 
 function renderCapabilitiesCard() {
   return `
-    <div class="demo-msg demo-msg-agent demo-walkthrough-msg">
-      <div class="demo-msg-header">
-        <span class="demo-agent-avatar">✦</span>
+    <div class="demo-walkthrough-card demo-walkthrough-msg">
+      <div class="demo-walkthrough-head">
         <div>
-          <strong class="demo-msg-agent-name">WebMCP Agent</strong>
-          <span class="demo-agent-state">System Capabilities</span>
+          <div class="demo-walkthrough-title">WebMCP Capability Walkthrough (48 tools)</div>
+          <div class="demo-walkthrough-desc">Five core analytical outcomes backed by live WebMCP tools. Every displayed action executes against live state.</div>
         </div>
+        <button class="demo-catalog-btn" id="demo-show-catalog" type="button">View all 48 tools</button>
       </div>
-      <div class="demo-walkthrough-card">
-        <div class="demo-walkthrough-head">
-          <div>
-            <div class="demo-walkthrough-title">WebMCP Capability Walkthrough (48 tools)</div>
-            <div class="demo-walkthrough-desc">Five functional groups covering the full investigation lifecycle. Every displayed action executes against live state.</div>
+      <div class="demo-outcomes-list">
+        ${HUMAN_OUTCOMES.map((o) => `
+          <div class="demo-outcome-card">
+            <div class="demo-outcome-title">${escapeHtml(o.title)}</div>
+            <div class="demo-outcome-desc">${escapeHtml(o.description)}</div>
           </div>
-          <button class="demo-catalog-btn" id="demo-show-catalog">View full catalog (48 tools)</button>
-        </div>
-        <div class="demo-tool-groups">
-          ${TOOL_GROUPS.map((g) => `
-            <div class="demo-tool-group-card">
-              <div class="demo-tool-group-top">
-                <span class="demo-tool-group-name">${escapeHtml(g.name)}</span>
-                <span class="demo-tool-group-badge">${g.count} tools</span>
-              </div>
-              <div class="demo-tool-group-desc">${escapeHtml(g.description)}</div>
-              <div class="demo-tool-group-reps">
-                ${g.representative.map((t) => `<code class="demo-tool-pill">${escapeHtml(t)}</code>`).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
+        `).join('')}
       </div>
     </div>
   `;
@@ -331,6 +493,78 @@ export function updateDemoOverlay(overlay, status = {}) {
   const resultSummary = toolResult || (toolState === 'complete' ? detail : '');
   const stepGoal = goal || title || (tool ? `Execute ${tool}` : 'Investigate dataset anomaly');
 
+  overlay._completedActions = overlay._completedActions || [];
+
+  if (tool && toolState === 'complete' && resultSummary) {
+    overlay._completedActions.push({ tool, summary: resultSummary, step });
+  }
+
+  const renderActionsSummary = () => {
+    const actions = overlay._completedActions || [];
+    if (!actions.length) return '';
+    return `
+      <details class="demo-actions-summary" id="demo-actions-summary">
+        <summary class="demo-actions-summary-toggle">
+          <span class="demo-actions-count-label">${actions.length} investigation action${actions.length === 1 ? '' : 's'}</span> · <span class="demo-actions-view-link">View details</span>
+        </summary>
+        <div class="demo-actions-list">
+          ${actions.map((a) => `
+            <div class="demo-action-item">
+              <code class="demo-action-tool">${escapeHtml(a.tool)}</code>:
+              <span class="demo-action-result">${escapeHtml(a.summary)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </details>
+    `;
+  };
+
+  const renderLiveToolCall = () => {
+    if (!tool) return '';
+    return `
+      <div class="demo-live-activity">
+        <div class="demo-tool-call ${toolState === 'complete' ? 'complete' : toolState === 'error' ? 'error' : ''}">
+          <span>${toolState === 'complete' ? 'COMPLETED' : toolState === 'error' ? 'FAILED' : 'RUNNING TOOL'}</span>
+          <code>${escapeHtml(tool)}</code>
+        </div>
+        <div class="demo-gar-block">
+          <div class="demo-gar-row">
+            <span class="demo-gar-label">Goal:</span>
+            <span class="demo-gar-val">${escapeHtml(stepGoal)}</span>
+          </div>
+          <div class="demo-gar-row">
+            <span class="demo-gar-label">Action:</span>
+            <span class="demo-gar-val"><span class="demo-tool-name">${escapeHtml(tool)}</span> ${semanticInput ? `<span class="demo-semantic-input">(${escapeHtml(semanticInput)})</span>` : ''}</span>
+          </div>
+          <div class="demo-gar-row demo-tool-result">
+            <span class="demo-gar-label">Result:</span>
+            <span class="demo-gar-val">${escapeHtml(resultSummary || (toolState === 'complete' ? 'Tool executed successfully' : 'Executing local WebMCP handler…'))}</span>
+          </div>
+        </div>
+        ${toolInput != null ? `
+          <details class="demo-tech-details">
+            <summary>Technical details</summary>
+            <pre class="demo-tool-args">${escapeHtml(JSON.stringify({ input: toolInput, result: rawResult ?? resultSummary }, null, 2))}</pre>
+          </details>
+        ` : ''}
+      </div>
+    `;
+  };
+
+  const renderFooterContent = () => `
+    <div class="demo-agent-header">
+      <span class="demo-agent-avatar">✦</span>
+      <div><strong class="demo-agent-name">WebMCP Agent</strong><span class="demo-agent-state">${escapeHtml(stateLabel)}</span></div>
+      ${step ? `<span class="demo-step">${escapeHtml(step)}</span>` : ''}
+    </div>
+    ${tool ? renderLiveToolCall() : ''}
+    ${!tool && !humanText && !agentText ? `
+      ${isComplete ? `<div class="demo-badge-row"><span class="demo-actor complete">COMPLETE</span></div>` : ''}
+      <div class="demo-caption-title">${escapeHtml(title)}</div>
+      ${detail ? `<div class="demo-caption-detail">${escapeHtml(detail)}</div>` : ''}
+    ` : ''}
+    ${renderActionsSummary()}
+  `;
   // If overlay doesn't have conversation container initialized or is mock object:
   if (!overlay._initialized || !overlay.querySelector || !overlay.querySelector('#demo-messages')) {
     overlay._history = overlay._history || [];
@@ -347,94 +581,21 @@ export function updateDemoOverlay(overlay, status = {}) {
           <button class="demo-ctrl-btn" id="demo-replay-btn" title="Replay demo from beginning">Replay</button>
         </div>
       </div>
-      <div class="demo-messages" id="demo-messages"></div>
+      <div class="demo-messages" id="demo-messages">${isWalkthrough ? renderCapabilitiesCard() : ''}</div>
       <div class="demo-panel-footer">
-        <div class="demo-agent-header">
-          <span class="demo-agent-avatar">✦</span>
-          <div><strong class="demo-agent-name">WebMCP Agent</strong><span class="demo-agent-state">${escapeHtml(stateLabel)}</span></div>
-          ${step ? `<span class="demo-step">${escapeHtml(step)}</span>` : ''}
-        </div>
-        <div class="demo-badge-row"><span class="demo-actor ${isHuman ? 'human' : isComplete ? 'complete' : 'agent'}">${escapeHtml(actor)}</span></div>
-        <div class="demo-caption-title">${escapeHtml(title)}</div>
-        ${detail ? `<div class="demo-caption-detail">${escapeHtml(detail)}</div>` : ''}
-        ${tool ? `
-          <div class="demo-tool-call ${toolState === 'complete' ? 'complete' : ''}">
-            <div>
-              <span>${toolState === 'complete' ? 'COMPLETED' : toolState === 'error' ? 'FAILED' : 'RUNNING TOOL'}</span>
-              <code>${escapeHtml(tool)}</code>
-            </div>
-            <div class="demo-gar-block">
-              <div class="demo-gar-row">
-                <span class="demo-gar-label">Goal:</span>
-                <span class="demo-gar-val">${escapeHtml(stepGoal)}</span>
-              </div>
-              <div class="demo-gar-row">
-                <span class="demo-gar-label">Action:</span>
-                <span class="demo-gar-val"><span class="demo-tool-name">${escapeHtml(tool)}</span> ${semanticInput ? `<span class="demo-semantic-input">(${escapeHtml(semanticInput)})</span>` : ''}</span>
-              </div>
-              <div class="demo-gar-row demo-tool-result">
-                <span class="demo-gar-label">Result:</span>
-                <span class="demo-gar-val">${escapeHtml(resultSummary || (toolState === 'complete' ? 'Tool executed successfully' : 'Executing local WebMCP handler…'))}</span>
-              </div>
-            </div>
-            ${toolInput != null ? `
-              <details class="demo-tech-details">
-                <summary>Technical details</summary>
-                <pre class="demo-tool-args">${escapeHtml(JSON.stringify(toolInput, null, 2))}</pre>
-              </details>
-            ` : ''}
-          </div>
-        ` : ''}
+        ${renderFooterContent()}
       </div>
     `;
 
     bindPanelControls(overlay);
+  } else {
+    const footerEl = overlay.querySelector('.demo-panel-footer');
+    if (footerEl) {
+      footerEl.innerHTML = renderFooterContent();
+    }
   }
 
-  // Update footer status card (keeps compatibility with existing tests checking `.demo-actor`, `.demo-agent-name`, `.demo-tool-call code`, etc.)
-  const footerEl = overlay.querySelector ? overlay.querySelector('.demo-panel-footer') : null;
-  if (footerEl) {
-    footerEl.innerHTML = `
-      <div class="demo-agent-header">
-        <span class="demo-agent-avatar">✦</span>
-        <div><strong class="demo-agent-name">WebMCP Agent</strong><span class="demo-agent-state">${escapeHtml(stateLabel)}</span></div>
-        ${step ? `<span class="demo-step">${escapeHtml(step)}</span>` : ''}
-      </div>
-      <div class="demo-badge-row"><span class="demo-actor ${isHuman ? 'human' : isComplete ? 'complete' : 'agent'}">${escapeHtml(actor)}</span></div>
-      <div class="demo-caption-title">${escapeHtml(title)}</div>
-      ${detail ? `<div class="demo-caption-detail">${escapeHtml(detail)}</div>` : ''}
-      ${tool ? `
-        <div class="demo-tool-call ${toolState === 'complete' ? 'complete' : ''}">
-          <div>
-            <span>${toolState === 'complete' ? 'COMPLETED' : toolState === 'error' ? 'FAILED' : 'RUNNING TOOL'}</span>
-            <code>${escapeHtml(tool)}</code>
-          </div>
-          <div class="demo-gar-block">
-            <div class="demo-gar-row">
-              <span class="demo-gar-label">Goal:</span>
-              <span class="demo-gar-val">${escapeHtml(stepGoal)}</span>
-            </div>
-            <div class="demo-gar-row">
-              <span class="demo-gar-label">Action:</span>
-              <span class="demo-gar-val"><span class="demo-tool-name">${escapeHtml(tool)}</span> ${semanticInput ? `<span class="demo-semantic-input">(${escapeHtml(semanticInput)})</span>` : ''}</span>
-            </div>
-            <div class="demo-gar-row demo-tool-result">
-              <span class="demo-gar-label">Result:</span>
-              <span class="demo-gar-val">${escapeHtml(resultSummary || (toolState === 'complete' ? 'Tool executed successfully' : 'Executing local WebMCP handler…'))}</span>
-            </div>
-          </div>
-          ${toolInput != null ? `
-            <details class="demo-tech-details">
-              <summary>Technical details</summary>
-              <pre class="demo-tool-args">${escapeHtml(JSON.stringify(toolInput, null, 2))}</pre>
-            </details>
-          ` : ''}
-        </div>
-      ` : ''}
-    `;
-  }
-
-  // Update conversational stream in #demo-messages
+  // Update conversational stream in #demo-messages (max 4 narrative messages)
   const messagesEl = overlay.querySelector ? overlay.querySelector('#demo-messages') : null;
   if (messagesEl) {
     if (isWalkthrough) {
@@ -443,74 +604,48 @@ export function updateDemoOverlay(overlay, status = {}) {
         bindPanelControls(overlay);
       }
     } else if (humanText) {
-      messagesEl.insertAdjacentHTML('beforeend', `
-        <div class="demo-msg demo-msg-human">
-          <div class="demo-msg-header">
-            <span class="demo-human-avatar">👤</span>
-            <div>
-              <strong class="demo-human-name">Human Analyst</strong>
-              <span class="demo-actor-badge human">${escapeHtml(actor)}</span>
+      const existingNarrative = messagesEl.querySelectorAll('.demo-narrative-msg');
+      const alreadyHas = Array.from(existingNarrative).some((el) => el.textContent.includes(humanText));
+      if (!alreadyHas) {
+        messagesEl.insertAdjacentHTML('beforeend', `
+          <div class="demo-msg demo-msg-human demo-narrative-msg">
+            <div class="demo-msg-header">
+              <span class="demo-human-avatar">👤</span>
+              <div>
+                <strong class="demo-human-name">Human Analyst</strong>
+                <span class="demo-actor-badge human">${escapeHtml(actor)}</span>
+              </div>
             </div>
+            <div class="demo-msg-content">${escapeHtml(humanText)}</div>
           </div>
-          <div class="demo-msg-content">${escapeHtml(humanText)}</div>
-        </div>
-      `);
+        `);
+        if (!isDemoPaused()) {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+      }
     } else if (agentText) {
-      messagesEl.insertAdjacentHTML('beforeend', `
-        <div class="demo-msg demo-msg-agent">
-          <div class="demo-msg-header">
-            <span class="demo-agent-avatar">✦</span>
-            <div>
-              <strong class="demo-msg-agent-name">WebMCP Agent</strong>
-              <span class="demo-agent-state">Analysis Synthesis</span>
+      const existingNarrative = messagesEl.querySelectorAll('.demo-narrative-msg');
+      const alreadyHas = Array.from(existingNarrative).some((el) => el.textContent.includes(agentText));
+      if (!alreadyHas) {
+        messagesEl.insertAdjacentHTML('beforeend', `
+          <div class="demo-msg demo-msg-agent demo-narrative-msg">
+            <div class="demo-msg-header">
+              <span class="demo-agent-avatar">✦</span>
+              <div>
+                <strong class="demo-msg-agent-name">WebMCP Agent</strong>
+                <span class="demo-agent-state">Analysis Synthesis</span>
+              </div>
             </div>
+            <div class="demo-msg-content">${escapeHtml(agentText)}</div>
           </div>
-          <div class="demo-msg-content">${escapeHtml(agentText)}</div>
-        </div>
-      `);
-    } else if (tool) {
-      // Find or create current tool step card in stream
-      let stepCard = messagesEl.querySelector(`[data-tool-step="${escapeHtml(tool)}"][data-step-id="${escapeHtml(step)}"]`);
-      const cardHtml = `
-        <div class="demo-step-card ${toolState === 'complete' ? 'complete' : toolState === 'error' ? 'error' : 'running'}" data-tool-step="${escapeHtml(tool)}" data-step-id="${escapeHtml(step)}">
-          <div class="demo-step-head">
-            <span class="demo-step-badge ${toolState === 'complete' ? 'complete' : toolState === 'error' ? 'error' : 'running'}">
-              ${toolState === 'complete' ? 'COMPLETED' : toolState === 'error' ? 'FAILED' : 'RUNNING TOOL'}
-            </span>
-            <code>${escapeHtml(tool)}</code>
-          </div>
-          <div class="demo-gar-block">
-            <div class="demo-gar-row">
-              <span class="demo-gar-label">Goal:</span>
-              <span class="demo-gar-val">${escapeHtml(stepGoal)}</span>
-            </div>
-            <div class="demo-gar-row">
-              <span class="demo-gar-label">Action:</span>
-              <span class="demo-gar-val"><code>${escapeHtml(tool)}</code> ${semanticInput ? `<span class="demo-semantic-input">(${escapeHtml(semanticInput)})</span>` : ''}</span>
-            </div>
-            <div class="demo-gar-row demo-tool-result">
-              <span class="demo-gar-label">Result:</span>
-              <span class="demo-gar-val">${escapeHtml(resultSummary || (toolState === 'complete' ? 'Tool executed successfully' : 'Executing local WebMCP handler…'))}</span>
-            </div>
-          </div>
-          ${toolInput != null ? `
-            <details class="demo-tech-details">
-              <summary>Technical details</summary>
-              <pre class="demo-tool-args">${escapeHtml(JSON.stringify({ input: toolInput, result: rawResult ?? resultSummary }, null, 2))}</pre>
-            </details>
-          ` : ''}
-        </div>
-      `;
-
-      if (stepCard) {
-        stepCard.outerHTML = cardHtml;
-      } else {
-        messagesEl.insertAdjacentHTML('beforeend', cardHtml);
+        `);
+        if (!isDemoPaused()) {
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
       }
     }
-
-    // Auto-scroll messages stream to keep up with progress
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    // No per-tool cards appended to messagesEl. Live activity is strictly in footer!
+    if (isComplete) messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 }
 
@@ -525,9 +660,25 @@ export async function runDemoScenario(store, options = {}) {
   const cursor = options.cursor ?? createDemoCursor();
   const runId = ++currentRunId;
 
-  // Reset to deterministic checkout-regression dataset
+  // Snapshot normal workspace persistence and isolate demo session
+  let normalWorkspaceSnapshot = null;
+  let hasNormalWorkspaceSnapshot = false;
   if (typeof localStorage !== 'undefined') {
-    try { localStorage.removeItem('investigation-canvas-state-v1'); } catch (_) {}
+    try {
+      normalWorkspaceSnapshot = localStorage.getItem('investigation-canvas-state-v1');
+      hasNormalWorkspaceSnapshot = normalWorkspaceSnapshot !== null;
+    } catch (_) {}
+  }
+  if (typeof store.isolateForDemo === 'function') {
+    store.isolateForDemo();
+  }
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.removeItem('investigation-canvas-demo-session-v1');
+      if (hasNormalWorkspaceSnapshot) {
+        sessionStorage.setItem('investigation-canvas-pre-demo-snapshot', normalWorkspaceSnapshot);
+      }
+    } catch (_) {}
   }
   store.loadDataset('checkout-regression');
   store.clearFilters('system');
@@ -538,6 +689,7 @@ export async function runDemoScenario(store, options = {}) {
 
   if (overlay) {
     overlay._initialized = false;
+    overlay._completedActions = [];
   }
 
   let currentStep = '';
@@ -573,7 +725,7 @@ export async function runDemoScenario(store, options = {}) {
 
         try {
           const result = await origExecute(input);
-          const summary = summarizeToolResult(result);
+          const summary = summarizeToolResult(result, t.name, input, store);
           setStatus({
             actor: 'AGENT',
             step: currentStep,
@@ -614,12 +766,12 @@ export async function runDemoScenario(store, options = {}) {
     return t.execute(input, meta);
   };
 
-  // 0. Walkthrough of all 48 tools in 5 groups
+  // 0. Walkthrough of 5 core analytical human outcomes
   setStatus({
     actor: 'AGENT',
     step: 'Intro',
     title: 'WebMCP Tool Capabilities',
-    detail: '48 tools grouped into Workspace, Comparative Analytics, Evidence, Hypotheses, and Canvas.',
+    detail: 'Five core analytical outcomes backed by 48 live WebMCP tools.',
     isWalkthrough: true
   });
   await delay(7000, speed, runId);
@@ -904,6 +1056,17 @@ export async function runDemoScenario(store, options = {}) {
     detail: `Auditable provenance preserved: ${agentActions} agent tool actions and ${humanActions} human actions logged. Inspect Provenance, Hypotheses, or Canvas.`
   });
 
+  // Restore normal workspace persistence snapshot
+  if (typeof localStorage !== 'undefined') {
+    try {
+      if (hasNormalWorkspaceSnapshot) {
+        localStorage.setItem('investigation-canvas-state-v1', normalWorkspaceSnapshot);
+      } else {
+        localStorage.removeItem('investigation-canvas-state-v1');
+      }
+    } catch (_) {}
+  }
+
   return { ok: true };
 }
 
@@ -916,6 +1079,7 @@ export function initDemo(store) {
   const cursor = createDemoCursor();
 
   runDemoScenario(store, { overlay, cursor }).catch((err) => {
+    restorePreDemoWorkspace();
     console.error('[Demo Error]', err);
     updateDemoOverlay(overlay, {
       actor: 'ERROR',

@@ -18,7 +18,40 @@ with sync_playwright() as p:
         launch_options['executable_path'] = '/usr/bin/chromium'
 
     browser = p.chromium.launch(**launch_options)
+
+    onboarding_context = browser.new_context(viewport={'width': 1280, 'height': 720})
+    onboarding_page = onboarding_context.new_page()
+    onboarding_page.goto(f'{BASE_URL}?demo=1', wait_until='networkidle')
+    onboarding_page.locator('#demo-pause-btn').click()
+    onboarding = onboarding_page.evaluate(r"""() => {
+      const panel = document.querySelector('#demo-overlay').getBoundingClientRect();
+      const workspace = document.querySelector('.workspace').getBoundingClientRect();
+      const messages = document.querySelector('#demo-messages');
+      return {
+        outcomes: document.querySelectorAll('.demo-outcome-card').length,
+        toolPills: document.querySelectorAll('.demo-tool-pill').length,
+        scrollTop: messages.scrollTop,
+        scrollFits: messages.scrollHeight <= messages.clientHeight,
+        panelWidth: panel.width,
+        workspaceWidth: workspace.width,
+        viewportWidth: innerWidth,
+        rightbarDisplay: getComputedStyle(document.querySelector('.rightbar')).display
+      };
+    }""")
+    assert onboarding['outcomes'] == 5 and onboarding['toolPills'] == 0
+    assert onboarding['scrollTop'] == 0 and onboarding['scrollFits']
+    assert 360 <= onboarding['panelWidth'] <= 380
+    assert abs(onboarding['workspaceWidth'] + onboarding['panelWidth'] - onboarding['viewportWidth']) < 2
+    assert onboarding['rightbarDisplay'] == 'none'
+    onboarding_context.close()
+
     context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+    normal_before = context.new_page()
+    normal_before.goto(BASE_URL, wait_until='networkidle')
+    normal_before.locator('#dataset-switcher').select_option('model-regression')
+    assert normal_before.locator('#dataset-switcher').input_value() == 'model-regression'
+    normal_before.close()
+
     page = context.new_page()
     errors = []
     page.add_init_script("""
@@ -67,8 +100,47 @@ with sync_playwright() as p:
     assert result['findings'] >= 2
     assert result['agentActions'] > 0 and result['humanActions'] > 0
     assert result['canvasArtifact']
+    conversation = page.evaluate(r"""() => ({
+      narratives: document.querySelectorAll('#demo-messages .demo-narrative-msg').length,
+      transcriptTools: document.querySelectorAll('#demo-messages .demo-step-card').length,
+      completedActions: document.querySelectorAll('.demo-action-item').length,
+      staleLiveActivity: document.querySelectorAll('.demo-live-activity').length
+    })""")
+    assert conversation == {
+        'narratives': 4,
+        'transcriptTools': 0,
+        'completedActions': 22,
+        'staleLiveActivity': 0
+    }
     assert not errors, '\n'.join(errors)
     page.screenshot(path=str(ARTIFACTS_DIR / 'demo-complete.png'), full_page=True)
+
+    normal_after = context.new_page()
+    normal_after.goto(BASE_URL, wait_until='networkidle')
+    assert normal_after.locator('#dataset-switcher').input_value() == 'model-regression'
+    assert normal_after.locator('#demo-overlay').count() == 0
+    normal_after.close()
+
+    mobile_context = browser.new_context(viewport={'width': 390, 'height': 844})
+    mobile_page = mobile_context.new_page()
+    mobile_page.goto(f'{BASE_URL}?demo=1', wait_until='networkidle')
+    mobile_page.locator('#demo-pause-btn').click()
+    mobile_layout = mobile_page.evaluate(r"""() => {
+      const panel = document.querySelector('#demo-overlay').getBoundingClientRect();
+      return {
+        width: panel.width,
+        height: panel.height,
+        viewportWidth: innerWidth,
+        viewportHeight: innerHeight,
+        bodyScrollWidth: document.body.scrollWidth,
+        paddingBottom: parseFloat(getComputedStyle(document.querySelector('.workspace')).paddingBottom)
+      };
+    }""")
+    assert mobile_layout['width'] == mobile_layout['viewportWidth']
+    assert mobile_layout['height'] <= mobile_layout['viewportHeight'] * 0.45 + 1
+    assert mobile_layout['bodyScrollWidth'] <= mobile_layout['viewportWidth']
+    assert mobile_layout['paddingBottom'] >= mobile_layout['height']
+    mobile_context.close()
 
     clean_context = browser.new_context()
     clean_page = clean_context.new_page()

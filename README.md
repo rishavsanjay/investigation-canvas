@@ -44,7 +44,7 @@ For the clearest demonstration, keep the built-in **Checkout conversion regressi
 npm test
 ```
 
-The repository also includes real-browser E2E, responsive-layout, visual screenshot, and full WebMCP tool-contract verification. The current detailed suite contains 142 tests, and the browser verifier registers and invokes all 48 exposed tools against deterministic sample investigations.
+The repository also includes real-browser E2E, responsive-layout, visual screenshot, and full WebMCP tool-contract verification. The current detailed suite contains 147 tests, and the browser verifier registers and invokes all 48 exposed tools against deterministic sample investigations.
 
 ## Project layout
 

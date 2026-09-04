@@ -514,6 +514,7 @@ window.InvestigationCanvas={store,createWebMcpTools:()=>createWebMcpTools(store)
 if (typeof window !== 'undefined' && window.location) {
   const params = new URLSearchParams(window.location.search);
   if (params.get('demo') === '1') {
+    store.isolateForDemo();
     import('./demo.js').then(({ initDemo }) => initDemo(store));
   }
 }
