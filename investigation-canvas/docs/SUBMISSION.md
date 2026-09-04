@@ -1,5 +1,7 @@
 # Submission draft
 
+Public repository: <https://github.com/rishavsanjay/investigation-canvas>
+
 ## Project description
 
 Investigation Canvas is a WebMCP-native visual reasoning workspace for investigating complex data and evidence. Humans can brush charts, select records, inspect timelines, traverse relationships, open source documents, and maintain competing hypotheses. Browser agents receive semantic WebMCP tools over the exact same state and can select evidence, run comparisons, restructure visual views, open sources, create and revise hypotheses, attach supporting or contradicting evidence, branch investigations, and preserve an auditable provenance trail.

@@ -10,12 +10,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rishavsanjay/git-test.git"
+    "url": "git+https://github.com/rishavsanjay/investigation-canvas.git"
   },
   "author": "rishavsanjay",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/rishavsanjay/git-test/issues"
+    "url": "https://github.com/rishavsanjay/investigation-canvas/issues"
   },
-  "homepage": "https://github.com/rishavsanjay/git-test#readme"
+  "homepage": "https://github.com/rishavsanjay/investigation-canvas#readme"
 }

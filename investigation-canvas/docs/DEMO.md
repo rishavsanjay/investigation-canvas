@@ -1,5 +1,7 @@
 # Automatic Demo Mode
 
+For a recording-ready 2–2.5 minute voiceover, use [VIDEO_SCRIPT.md](VIDEO_SCRIPT.md).
+
 ## Exact URL
 
 To launch the zero-click, fully automatic guided demonstration:
