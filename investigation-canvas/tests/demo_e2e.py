@@ -70,7 +70,8 @@ with sync_playwright() as p:
         'describe_workspace', 'select_where', 'compare_selection_to_rest',
         'search_evidence', 'update_hypothesis', 'attach_evidence_to_hypothesis',
         'focus_evidence', 'create_finding', 'create_canvas_view', 'focus_canvas_view',
-        'get_selection', 'fork_hypothesis', 'add_causal_link', 'get_activity_provenance'
+        'get_selection', 'fork_hypothesis', 'find_counterevidence', 'add_causal_link',
+        'get_activity_provenance'
     }
     page.locator('.demo-actor.complete').wait_for(timeout=30_000)
     assert page.locator('#demo-cursor.visible').count() == 1
@@ -92,7 +93,7 @@ with sync_playwright() as p:
       };
     }""")
     assert result['dataset'] == 'checkout-regression'
-    assert result['tab'] == 'provenance'
+    assert result['tab'] == 'hypotheses'
     assert result['tools'] == 48
     assert result['client']['status'] == 'supported'
     assert result['payment']['status'] == 'weakened'
@@ -109,9 +110,14 @@ with sync_playwright() as p:
     assert conversation == {
         'narratives': 4,
         'transcriptTools': 0,
-        'completedActions': 22,
+        'completedActions': 23,
         'staleLiveActivity': 0
     }
+    assert page.locator('.demo-final-summary').count() == 1
+    final_summary = page.locator('.demo-final-summary').inner_text()
+    assert 'Cause 1' in final_summary and 'Cause 2' in final_summary
+    assert 'Human contribution' in final_summary and 'Audit trail' in final_summary
+    assert '23 WebMCP actions' in final_summary
     assert not errors, '\n'.join(errors)
     page.screenshot(path=str(ARTIFACTS_DIR / 'demo-complete.png'), full_page=True)
 

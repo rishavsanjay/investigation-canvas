@@ -436,10 +436,11 @@ function renderCapabilitiesCard() {
     <div class="demo-walkthrough-card demo-walkthrough-msg">
       <div class="demo-walkthrough-head">
         <div>
-          <div class="demo-walkthrough-title">WebMCP Capability Walkthrough (48 tools)</div>
-          <div class="demo-walkthrough-desc">Five core analytical outcomes backed by live WebMCP tools. Every displayed action executes against live state.</div>
+          <div class="demo-walkthrough-title">Select it. Investigate it. Audit it.</div>
+          <div class="demo-walkthrough-desc">You choose suspicious data. The agent investigates that exact context, tests explanations, and leaves every conclusion inspectable.</div>
+          <div class="demo-walkthrough-meta">5 investigation outcomes · 48 available WebMCP tools</div>
         </div>
-        <button class="demo-catalog-btn" id="demo-show-catalog" type="button">View all 48 tools</button>
+        <button class="demo-catalog-btn" id="demo-show-catalog" type="button">Inspect tools</button>
       </div>
       <div class="demo-outcomes-list">
         ${HUMAN_OUTCOMES.map((o) => `
@@ -474,7 +475,8 @@ export function updateDemoOverlay(overlay, status = {}) {
     rawResult = null,
     humanText = '',
     agentText = '',
-    isWalkthrough = false
+    isWalkthrough = false,
+    summaryItems = []
   } = status;
 
   const isHuman = actor.toUpperCase().includes('HUMAN');
@@ -492,6 +494,11 @@ export function updateDemoOverlay(overlay, status = {}) {
   const semanticInput = formatSemanticInput(tool, toolInput);
   const resultSummary = toolResult || (toolState === 'complete' ? detail : '');
   const stepGoal = goal || title || (tool ? `Execute ${tool}` : 'Investigate dataset anomaly');
+
+  if (overlay.classList?.toggle) {
+    overlay.classList.toggle('demo-is-human', isHuman);
+    overlay.classList.toggle('demo-is-complete', isComplete);
+  }
 
   overlay._completedActions = overlay._completedActions || [];
 
@@ -551,18 +558,40 @@ export function updateDemoOverlay(overlay, status = {}) {
     `;
   };
 
+  const renderFinalSummary = () => {
+    if (!isComplete || !summaryItems.length) return '';
+    return `
+      <div class="demo-final-summary">
+        <div class="demo-final-kicker">Investigation outcome</div>
+        ${summaryItems.map((item) => `
+          <div class="demo-final-row ${item.emphasis ? 'emphasis' : ''}">
+            <span>${escapeHtml(item.label)}</span>
+            <strong>${escapeHtml(item.value)}</strong>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  };
+
   const renderFooterContent = () => `
     <div class="demo-agent-header">
-      <span class="demo-agent-avatar">✦</span>
-      <div><strong class="demo-agent-name">WebMCP Agent</strong><span class="demo-agent-state">${escapeHtml(stateLabel)}</span></div>
+      <span class="${isHuman ? 'demo-human-avatar' : 'demo-agent-avatar'}">${isHuman ? '👤' : '✦'}</span>
+      <div><strong class="demo-agent-name">${isHuman ? 'Human Analyst' : 'WebMCP Agent'}</strong><span class="demo-agent-state">${escapeHtml(stateLabel)}</span></div>
       ${step ? `<span class="demo-step">${escapeHtml(step)}</span>` : ''}
     </div>
+    ${isHuman ? `
+      <div class="demo-human-handoff">
+        <strong>Human redirected the investigation</strong>
+        <span>The agent will analyze the exact points the first explanation missed.</span>
+      </div>
+    ` : ''}
     ${tool ? renderLiveToolCall() : ''}
     ${!tool && !humanText && !agentText ? `
       ${isComplete ? `<div class="demo-badge-row"><span class="demo-actor complete">COMPLETE</span></div>` : ''}
       <div class="demo-caption-title">${escapeHtml(title)}</div>
       ${detail ? `<div class="demo-caption-detail">${escapeHtml(detail)}</div>` : ''}
     ` : ''}
+    ${renderFinalSummary()}
     ${renderActionsSummary()}
   `;
   // If overlay doesn't have conversation container initialized or is mock object:
@@ -608,7 +637,7 @@ export function updateDemoOverlay(overlay, status = {}) {
       const alreadyHas = Array.from(existingNarrative).some((el) => el.textContent.includes(humanText));
       if (!alreadyHas) {
         messagesEl.insertAdjacentHTML('beforeend', `
-          <div class="demo-msg demo-msg-human demo-narrative-msg">
+          <div class="demo-msg demo-msg-human demo-narrative-msg ${isHuman ? 'demo-msg-handoff' : ''}">
             <div class="demo-msg-header">
               <span class="demo-human-avatar">👤</span>
               <div>
@@ -884,6 +913,13 @@ export async function runDemoScenario(store, options = {}) {
     goal: 'Attach payment health check as contradicting payment failure'
   });
 
+  await tool('find_counterevidence')({
+    hypothesisId: clientHyp.id,
+    limit: 5
+  }, {
+    goal: 'Try to falsify the leading Safari explanation before concluding'
+  });
+
   // Visibly open evidence document in evidence reader
   setDemoFocus('[data-tab="evidence"]');
   await moveDemoCursor(cursor, '[data-tab="evidence"]', speed, { click: true, runId });
@@ -1036,7 +1072,8 @@ export async function runDemoScenario(store, options = {}) {
   });
   await delay(2800, speed, runId);
 
-  // 8. Finish on Provenance
+  // 8. Prove provenance, then finish on the competing explanations rather
+  // than leaving the viewer on a dense activity log.
   currentStep = '8 / 8';
   setDemoFocus('[data-tab="provenance"]');
   await moveDemoCursor(cursor, '[data-tab="provenance"]', speed, { click: true, runId });
@@ -1045,15 +1082,22 @@ export async function runDemoScenario(store, options = {}) {
   const prov = await tool('get_activity_provenance')({ limit: 40 }, {
     goal: 'Retrieve complete auditable provenance trail'
   });
-  const agentActions = prov?.activity?.filter((a) => a.source === 'agent').length || 0;
   const humanActions = prov?.activity?.filter((a) => a.source === 'human').length || 0;
+  const toolActions = overlay?._completedActions?.length || 23;
 
-  setDemoFocus(null);
+  activateTab(store, 'hypotheses');
+  setDemoFocus('.hypothesis-grid');
   setStatus({
     actor: 'COMPLETE',
     step: 'COMPLETE',
     title: 'Investigation demo completed',
-    detail: `Auditable provenance preserved: ${agentActions} agent tool actions and ${humanActions} human actions logged. Inspect Provenance, Hypotheses, or Canvas.`
+    detail: 'One incident, two independent causes, and a human correction the agent could act on directly.',
+    summaryItems: [
+      { label: 'Cause 1', value: `Mobile Safari 20.2 on web-4.7.2 (${convDeltaText} conversion)` },
+      { label: 'Cause 2', value: `Desktop pricing experiment B (${priceDeltaText} conversion)` },
+      { label: 'Human contribution', value: `Redirected the agent with ${humanSelection.count} selected records`, emphasis: true },
+      { label: 'Audit trail', value: `${toolActions} WebMCP actions · ${humanActions} human redirect${humanActions === 1 ? '' : 's'}` }
+    ]
   });
 
   // Restore normal workspace persistence snapshot

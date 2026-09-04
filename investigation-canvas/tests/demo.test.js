@@ -68,8 +68,8 @@ test('runDemoScenario completes successfully with fast speed', async () => {
   assert.ok(pricingFinding);
   assert.ok(pricingFinding.evidenceIds.includes('doc-experiment-b'));
 
-  // 8. Finished on Provenance tab
-  assert.equal(store.state.activeTab, 'provenance');
+  // 8. Provenance is audited, then the calmer final frame shows hypotheses
+  assert.equal(store.state.activeTab, 'hypotheses');
 
   // 9. Activity log contains both agent and human actions
   const humanActivity = store.state.activity.filter((a) => a.source === 'human');
@@ -126,6 +126,7 @@ test('overlay renders one readable activity state without a scripted-demo badge'
   assert.ok(!mockOverlay.innerHTML.includes('SCRIPTED DEMO'));
   assert.ok(mockOverlay.innerHTML.includes('Human challenge'));
   assert.ok(mockOverlay.innerHTML.includes('Human challenges agent explanation'));
+  assert.ok(mockOverlay.innerHTML.includes('Human redirected the investigation'));
 });
 
 test('delay respects speed factor', async () => {
@@ -248,7 +249,9 @@ test('HUMAN_OUTCOMES covers 5 plain-language human outcomes with no tool pills',
   assert.ok(mockOverlay.innerHTML.includes('Test competing explanations'));
   assert.ok(mockOverlay.innerHTML.includes('Preserve findings and history'));
   assert.ok(mockOverlay.innerHTML.includes('id="demo-show-catalog"'));
-  assert.ok(mockOverlay.innerHTML.includes('View all 48 tools'));
+  assert.ok(mockOverlay.innerHTML.includes('Select it. Investigate it. Audit it.'));
+  assert.ok(mockOverlay.innerHTML.includes('48 available WebMCP tools'));
+  assert.ok(mockOverlay.innerHTML.includes('Inspect tools'));
   // No representative tool pills in capability onboarding
   assert.ok(!mockOverlay.innerHTML.includes('demo-tool-pill'));
 });
