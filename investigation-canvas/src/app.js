@@ -15,6 +15,14 @@ import { SAMPLE_DATASETS } from './sampleData.js';
 import { createWebMcpTools, registerWebMcp } from './webmcp.js';
 import { renderSpatialCanvas, bindSpatialCanvasEvents, renderEvidenceMedia } from './workspace.js';
 import { loadFileSource, loadPublicApiSource } from './dataClient.js';
+import {
+  getActiveSession,
+  startExamplePack,
+  switchExamplePack,
+  exitExample,
+  renderExampleChooserModal,
+  renderMissionRail
+} from './exampleWorkflow.js';
 // POST_ZIP_ENHANCEMENTS_V2: app
 
 const store = new InvestigationStore();
@@ -106,6 +114,7 @@ function renderTopbar(s) {
     </nav>
     <div class="top-actions">
       <span class="status-pill ${storageFailed?'error':s.webmcp.available?'live':''}" title="${e(storageFailed?s.persistence.lastError:s.webmcp.lastError || '')}"><i class="status-dot"></i>${e(mcpText)}</span>
+      <button class="btn ghost" id="example-workflow-btn" title="Do example investigation" aria-label="Do example">Do example</button>
       <button class="btn ghost" id="undo-btn" title="Undo">Undo</button>
       <button class="btn ghost" id="redo-btn" title="Redo">Redo</button>
       <button class="btn" id="import-btn">Import</button>
@@ -322,7 +331,8 @@ function render() {
     } catch {}
     active = { id: document.activeElement.id, start, end };
   }
-  root.innerHTML=`<div class="app-shell">${renderTopbar(s)}<div class="workspace ${s.ui.leftCollapsed?'left-collapsed':''} ${s.ui.rightCollapsed?'right-collapsed':''}">${renderSidebar(s)}${renderMain(s)}${renderRightbar(s)}</div></div>`;
+  const session = getActiveSession();
+  root.innerHTML=`<div class="app-shell">${renderTopbar(s)}<div class="workspace ${s.ui.leftCollapsed?'left-collapsed':''} ${s.ui.rightCollapsed?'right-collapsed':''} ${session ? 'has-mission-rail' : ''}">${renderSidebar(s)}${renderMain(s)}${session ? renderMissionRail(store) : renderRightbar(s)}</div></div>`;
   if(modal && !document.querySelector('.modal-backdrop')) renderModal();
   bindEvents();
   const evidenceInput = document.querySelector('#evidence-search');
@@ -385,6 +395,34 @@ function renderModal(){
     wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>WebMCP tool catalog (${tools.length})</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body">${tools.map(t=>`<div class="saved-item"><div class="saved-item-title"><code>${e(t.name)}</code> <span class="status">${t.annotations?.readOnlyHint?'read':'write'}</span>${t.annotations?.untrustedContentHint?'<span class="status weakened" style="margin-left:4px">untrusted output</span>':''}</div><div class="saved-item-meta" style="line-height:1.4">${e(t.description)}</div></div>`).join('')}</div></div>`;
   } else if(modal.kind==='api'){
     wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Connect a public JSON API</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body"><p class="modal-copy">Load a read-only HTTPS endpoint directly into this browser. No credentials, cookies, or tokens are sent. The API must allow browser CORS requests.</p><div class="form-grid"><div class="field"><label for="api-url">HTTPS endpoint</label><input id="api-url" type="url" required placeholder="https://api.example.com/events" /></div><div class="form-grid two"><div class="field"><label for="api-records-path">Records path (optional)</label><input id="api-records-path" placeholder="data.items" /></div><div class="field"><label for="api-title">Dataset title (optional)</label><input id="api-title" placeholder="Production events" /></div></div><div id="api-error" class="form-error" role="alert"></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="load-api">Load API snapshot</button></div></div></div>`;
+  } else if(modal.kind==='example-chooser'){
+    wrap.innerHTML=renderExampleChooserModal();
+    const handleSelectPack = (packId) => {
+      if (!packId) return;
+      closeModal();
+      if (getActiveSession()) {
+        switchExamplePack(store, packId);
+      } else {
+        startExamplePack(store, packId);
+      }
+    };
+    wrap.querySelectorAll('[data-start-pack]').forEach((b) => {
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        handleSelectPack(b.dataset.startPack);
+      });
+    });
+    wrap.querySelectorAll('.example-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        handleSelectPack(card.dataset.packId);
+      });
+      card.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          handleSelectPack(card.dataset.packId);
+        }
+      });
+    });
   }
   const dialog=wrap.querySelector('.modal');
   const heading=dialog?.querySelector('h2');
@@ -484,6 +522,32 @@ function bindEvents(){
   document.querySelector('#add-annotation')?.addEventListener('click',()=>showModal('annotation'));
   document.querySelector('#show-tools')?.addEventListener('click',()=>showModal('tools'));
   document.querySelectorAll('[data-copy-prompt]').forEach(b=>b.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(b.dataset.copyPrompt);toast('Prompt copied — use it with the browser agent')}catch{toast(b.dataset.copyPrompt)}}));
+  document.querySelector('#example-workflow-btn')?.addEventListener('click', () => {
+    showModal('example-chooser');
+  });
+  document.querySelector('#mission-exit-btn')?.addEventListener('click', () => {
+    exitExample(store);
+  });
+  document.querySelector('#mission-switch-pack-btn')?.addEventListener('click', () => {
+    showModal('example-chooser');
+  });
+  document.querySelectorAll('.copy-prompt-btn').forEach((b) => {
+    b.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const text = b.dataset.copyText;
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (_) {}
+      const card = b.closest('.prompt-card');
+      const banner = card?.querySelector('.copy-feedback-banner');
+      if (banner) {
+        banner.classList.remove('hidden');
+        setTimeout(() => banner?.classList.add('hidden'), 4000);
+      }
+      toast('Prompt copied to clipboard');
+    });
+  });
   document.querySelector('#import-btn')?.addEventListener('click',()=>fileInput.click());
   document.querySelector('#api-btn')?.addEventListener('click',()=>showModal('api'));
   document.querySelector('#export-btn')?.addEventListener('click',()=>download(`investigation-${store.state.dataset.id}.json`,JSON.stringify(store.exportState(),null,2)));
@@ -513,8 +577,8 @@ window.InvestigationCanvas={store,createWebMcpTools:()=>createWebMcpTools(store)
 
 if (typeof window !== 'undefined' && window.location) {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('demo') === '1') {
-    store.isolateForDemo();
-    import('./demo.js').then(({ initDemo }) => initDemo(store));
+  const exampleParam = params.get('example') || (params.get('demo') === '1' || params.get('walkthrough') === '1' ? 'checkout' : null);
+  if (exampleParam && ['checkout', 'model', 'fraud'].includes(exampleParam)) {
+    startExamplePack(store, exampleParam);
   }
 }

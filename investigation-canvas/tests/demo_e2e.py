@@ -1,59 +1,26 @@
 import os
+import re
 from pathlib import Path
-
 from playwright.sync_api import sync_playwright
-
 
 BASE_URL = os.environ.get('E2E_URL', 'http://127.0.0.1:4173/').split('?')[0]
 CHROMIUM_PATH = os.environ.get('CHROMIUM_PATH')
 ARTIFACTS_DIR = Path(os.environ.get('ARTIFACTS_DIR', Path(__file__).resolve().parents[1] / 'assets'))
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
-
 with sync_playwright() as p:
     launch_options = {'headless': True, 'args': ['--no-sandbox']}
     if CHROMIUM_PATH:
         launch_options['executable_path'] = CHROMIUM_PATH
+    elif Path('/usr/bin/google-chrome').exists():
+        launch_options['executable_path'] = '/usr/bin/google-chrome'
     elif Path('/usr/bin/chromium').exists():
         launch_options['executable_path'] = '/usr/bin/chromium'
-
     browser = p.chromium.launch(**launch_options)
-
-    onboarding_context = browser.new_context(viewport={'width': 1280, 'height': 720})
-    onboarding_page = onboarding_context.new_page()
-    onboarding_page.goto(f'{BASE_URL}?demo=1', wait_until='networkidle')
-    onboarding_page.locator('#demo-pause-btn').click()
-    onboarding = onboarding_page.evaluate(r"""() => {
-      const panel = document.querySelector('#demo-overlay').getBoundingClientRect();
-      const workspace = document.querySelector('.workspace').getBoundingClientRect();
-      const messages = document.querySelector('#demo-messages');
-      return {
-        outcomes: document.querySelectorAll('.demo-outcome-card').length,
-        toolPills: document.querySelectorAll('.demo-tool-pill').length,
-        scrollTop: messages.scrollTop,
-        scrollFits: messages.scrollHeight <= messages.clientHeight,
-        panelWidth: panel.width,
-        workspaceWidth: workspace.width,
-        viewportWidth: innerWidth,
-        rightbarDisplay: getComputedStyle(document.querySelector('.rightbar')).display
-      };
-    }""")
-    assert onboarding['outcomes'] == 5 and onboarding['toolPills'] == 0
-    assert onboarding['scrollTop'] == 0 and onboarding['scrollFits']
-    assert 360 <= onboarding['panelWidth'] <= 380
-    assert abs(onboarding['workspaceWidth'] + onboarding['panelWidth'] - onboarding['viewportWidth']) < 2
-    assert onboarding['rightbarDisplay'] == 'none'
-    onboarding_context.close()
-
-    context = browser.new_context(viewport={'width': 1440, 'height': 1000})
-    normal_before = context.new_page()
-    normal_before.goto(BASE_URL, wait_until='networkidle')
-    normal_before.locator('#dataset-switcher').select_option('model-regression')
-    assert normal_before.locator('#dataset-switcher').input_value() == 'model-regression'
-    normal_before.close()
-
+    context = browser.new_context(viewport={'width': 1280, 'height': 800})
     page = context.new_page()
-    errors = []
+
+    # Provide document.modelContext bridge mock to verify 48 registered tools
     page.add_init_script("""
       window.__registeredTools = [];
       Object.defineProperty(document, 'modelContext', { configurable: true, value: {
@@ -61,100 +28,143 @@ with sync_playwright() as p:
         getTools: async () => window.__registeredTools
       }});
     """)
-    page.on('console', lambda msg: errors.append(f'console {msg.type}: {msg.text}') if msg.type == 'error' else None)
-    page.on('pageerror', lambda exc: errors.append(f'pageerror: {exc}'))
 
-    page.goto(f'{BASE_URL}?demo=1&demoSpeed=20', wait_until='networkidle')
-    page.locator('.demo-tool-call code').wait_for(timeout=10_000)
-    assert page.locator('.demo-tool-call code').inner_text() in {
-        'describe_workspace', 'select_where', 'compare_selection_to_rest',
-        'search_evidence', 'update_hypothesis', 'attach_evidence_to_hypothesis',
-        'focus_evidence', 'create_finding', 'create_canvas_view', 'focus_canvas_view',
-        'get_selection', 'fork_hypothesis', 'find_counterevidence', 'add_causal_link',
-        'get_activity_provenance'
-    }
-    page.locator('.demo-actor.complete').wait_for(timeout=30_000)
-    assert page.locator('#demo-cursor.visible').count() == 1
-    assert page.locator('.demo-tag').count() == 0
-    assert page.locator('.demo-agent-name').inner_text() == 'WebMCP Agent'
-    result = page.evaluate(r"""() => {
-      const s=window.InvestigationCanvas.store.state;
-      return {
-        dataset:s.dataset.id,
-        tab:s.activeTab,
-        tools:window.__registeredTools.length,
-        client:s.hypotheses.find(h => h.id === 'hyp-client'),
-        payment:s.hypotheses.find(h => h.id === 'hyp-payment'),
-        pricing:s.hypotheses.find(h => /pricing experiment B/i.test(h.title)),
-        findings:s.findings.length,
-        agentActions:s.activity.filter(a => a.source === 'agent').length,
-        humanActions:s.activity.filter(a => a.source === 'human').length,
-        canvasArtifact:s.canvas.views.some(v => v.agentCreated && /Safari 20\.2/i.test(v.title))
-      };
+    # 1. Normal clean app: restrained entry button, no mounted example UI
+    page.goto(BASE_URL, wait_until='networkidle')
+
+    btn = page.locator('#example-workflow-btn')
+    assert btn.count() == 1
+    assert btn.inner_text().strip() == 'Do example'
+    assert page.locator('.mission-rail').count() == 0
+    assert page.locator('.modal.example-chooser-modal').count() == 0
+    assert page.locator('.demo-overlay').count() == 0
+    assert page.locator('.demo-cursor').count() == 0
+
+    # Verify WebMCP tool registration count is 48
+    registered_count = page.evaluate("() => window.__registeredTools?.length || 0")
+    assert registered_count == 48, f"Expected 48 registered tools, found {registered_count}"
+
+    # 2. Click opens compact gallery of the 3 existing datasets
+    btn.click()
+    page.wait_for_selector('.modal.example-chooser-modal')
+    cards = page.locator('.example-card')
+    assert cards.count() == 3
+
+    # Check Checkout card (Recommended)
+    checkout_card = page.locator('.example-card[data-pack-id="checkout"]')
+    assert checkout_card.count() == 1
+    assert checkout_card.locator('.example-badge.recommended').count() == 1
+    assert '720 telemetry records' in checkout_card.inner_text()
+    assert '8 evidence docs' in checkout_card.inner_text()
+    assert '10 entities' in checkout_card.inner_text()
+    assert 'Safari 20.2' in checkout_card.inner_text()
+
+    # Check Model card
+    model_card = page.locator('.example-card[data-pack-id="model"]')
+    assert model_card.count() == 1
+    assert '420 training runs' in model_card.inner_text()
+    assert '6 evidence docs' in model_card.inner_text()
+
+    # Check Fraud card
+    fraud_card = page.locator('.example-card[data-pack-id="fraud"]')
+    assert fraud_card.count() == 1
+    assert '560 transactions' in fraud_card.inner_text()
+    assert '6 evidence docs' in fraud_card.inner_text()
+
+    # 3. Select Checkout card: gallery closes, calm side mission rail opens, zero auto tool action
+    checkout_card.locator('.example-start-btn').click()
+    page.wait_for_selector('.mission-rail')
+    assert page.locator('.modal.example-chooser-modal').count() == 0
+
+    # Verify zero automatic agent actions or simulated cursors
+    activity = page.evaluate("() => window.InvestigationCanvas.store.state.activity")
+    assert not any(a.get('source') == 'agent' for a in activity), "No agent activity should run automatically"
+    assert page.locator('.demo-cursor').count() == 0
+
+    # 4. Prompt presence, comprehensive disclosure, and handoff copy
+    rail = page.locator('.mission-rail')
+    assert rail.locator('.webmcp-status-card').count() == 1
+    assert 'WebMCP ready — 48 tools registered' in rail.inner_text()
+
+    # Handoff instructions
+    assert 'When this page is open in ChatGPT\'s in-app browser' in rail.inner_text()
+    assert 'Chrome with WebMCP enabled' in rail.inner_text()
+    assert 'copies the prompt to your clipboard but does not send it' in rail.inner_text()
+
+    # Scenario prompt
+    concise_card = rail.locator('.primary-prompt-card')
+    assert concise_card.count() == 1
+    assert concise_card.locator('.copy-prompt-btn').count() == 1
+
+    # Comprehensive prompt disclosure
+    disclosure = rail.locator('.comprehensive-prompt-disclosure')
+    assert disclosure.count() == 1
+    disclosure.locator('.disclosure-toggle').click()
+    comp_prompt_text = disclosure.locator('.prompt-content-pre').inner_text()
+
+    # Check comprehensive prompt coverage
+    assert re.search(r'dataset.*schema.*baseline', comp_prompt_text, re.I)
+    assert re.search(r'search.*filter.*selection', comp_prompt_text, re.I)
+    assert re.search(r'compare.*selection to the rest', comp_prompt_text, re.I)
+    assert re.search(r'discriminating features.*correlations.*outliers', comp_prompt_text, re.I)
+    assert re.search(r'evidence.*trust.*graph.*counterevidence', comp_prompt_text, re.I)
+    assert re.search(r'competing hypotheses.*confidence.*fork', comp_prompt_text, re.I)
+    assert re.search(r'findings.*causal links', comp_prompt_text, re.I)
+    assert re.search(r'canvas views.*annotation', comp_prompt_text, re.I)
+    assert re.search(r'saved.*view.*branch', comp_prompt_text, re.I)
+    assert re.search(r'provenance.*verified evidence.*inferential conclusions', comp_prompt_text, re.I)
+
+    # 5. Switching packs resets isolated example state
+    rail.locator('#mission-switch-pack-btn').click()
+    page.wait_for_selector('.modal.example-chooser-modal')
+    page.locator('.example-card[data-pack-id="model"] .example-start-btn').click()
+    page.wait_for_selector('.mission-rail')
+    assert 'Model quality regression' in page.locator('.mission-rail-title').inner_text()
+    dataset_id = page.evaluate("() => window.InvestigationCanvas.store.state.dataset.id")
+    assert dataset_id == 'model-regression'
+
+    # 6. Exit restores exact in-memory store and byte-identical normal localStorage
+    page.goto(BASE_URL, wait_until='networkidle')
+    # Pre-condition: user performs specific changes in normal workspace
+    page.evaluate(r"""() => {
+      const store = window.InvestigationCanvas.store;
+      store.setSearch('persisted-normal-query');
+      store.persist();
     }""")
-    assert result['dataset'] == 'checkout-regression'
-    assert result['tab'] == 'hypotheses'
-    assert result['tools'] == 48
-    assert result['client']['status'] == 'supported'
-    assert result['payment']['status'] == 'weakened'
-    assert 'doc-experiment-b' in result['pricing']['supporting']
-    assert result['findings'] >= 2
-    assert result['agentActions'] > 0 and result['humanActions'] > 0
-    assert result['canvasArtifact']
-    conversation = page.evaluate(r"""() => ({
-      narratives: document.querySelectorAll('#demo-messages .demo-narrative-msg').length,
-      transcriptTools: document.querySelectorAll('#demo-messages .demo-step-card').length,
-      completedActions: document.querySelectorAll('.demo-action-item').length,
-      staleLiveActivity: document.querySelectorAll('.demo-live-activity').length
-    })""")
-    assert conversation == {
-        'narratives': 4,
-        'transcriptTools': 0,
-        'completedActions': 23,
-        'staleLiveActivity': 0
-    }
-    assert page.locator('.demo-final-summary').count() == 1
-    final_summary = page.locator('.demo-final-summary').inner_text()
-    assert 'Cause 1' in final_summary and 'Cause 2' in final_summary
-    assert 'Human contribution' in final_summary and 'Audit trail' in final_summary
-    assert '23 WebMCP actions' in final_summary
-    assert not errors, '\n'.join(errors)
-    page.screenshot(path=str(ARTIFACTS_DIR / 'demo-complete.png'), full_page=True)
+    normal_storage_before = page.evaluate("() => localStorage.getItem('investigation-canvas:workspace:v1')")
 
-    normal_after = context.new_page()
-    normal_after.goto(BASE_URL, wait_until='networkidle')
-    assert normal_after.locator('#dataset-switcher').input_value() == 'model-regression'
-    assert normal_after.locator('#demo-overlay').count() == 0
-    normal_after.close()
+    # Enter example via URL parameter ?example=checkout
+    page.goto(f'{BASE_URL}?example=checkout', wait_until='networkidle')
+    assert page.locator('.mission-rail').count() == 1
 
-    mobile_context = browser.new_context(viewport={'width': 390, 'height': 844})
-    mobile_page = mobile_context.new_page()
-    mobile_page.goto(f'{BASE_URL}?demo=1', wait_until='networkidle')
-    mobile_page.locator('#demo-pause-btn').click()
-    mobile_layout = mobile_page.evaluate(r"""() => {
-      const panel = document.querySelector('#demo-overlay').getBoundingClientRect();
-      return {
-        width: panel.width,
-        height: panel.height,
-        viewportWidth: innerWidth,
-        viewportHeight: innerHeight,
-        bodyScrollWidth: document.body.scrollWidth,
-        paddingBottom: parseFloat(getComputedStyle(document.querySelector('.workspace')).paddingBottom)
-      };
+    # Mutate state during example
+    page.evaluate(r"""() => {
+      const store = window.InvestigationCanvas.store;
+      store.setSearch('example-isolated-query');
+      store.setSelection(['req-0001']);
+      store.persist();
     }""")
-    assert mobile_layout['width'] == mobile_layout['viewportWidth']
-    assert mobile_layout['height'] <= mobile_layout['viewportHeight'] * 0.45 + 1
-    assert mobile_layout['bodyScrollWidth'] <= mobile_layout['viewportWidth']
-    assert mobile_layout['paddingBottom'] >= mobile_layout['height']
-    mobile_context.close()
 
-    clean_context = browser.new_context()
-    clean_page = clean_context.new_page()
-    clean_page.goto(BASE_URL, wait_until='networkidle')
-    assert clean_page.locator('#demo-overlay').count() == 0
-    assert clean_page.evaluate("window.InvestigationCanvas.store.state.activeTab") == 'explore'
-    clean_context.close()
+    # Verify normal localStorage remained untouched during example
+    normal_storage_during = page.evaluate("() => localStorage.getItem('investigation-canvas:workspace:v1')")
+    assert normal_storage_during == normal_storage_before
+
+    # Click Exit example
+    page.locator('#mission-exit-btn').click()
+    assert page.locator('.mission-rail').count() == 0
+
+    # Verify URL parameter removed
+    current_url = page.url
+    assert 'example=' not in current_url
+
+    # Verify byte-identical restoration of normal localStorage
+    normal_storage_after = page.evaluate("() => localStorage.getItem('investigation-canvas:workspace:v1')")
+    assert normal_storage_after == normal_storage_before
+
+    # Verify in-memory store restored
+    restored_search = page.evaluate("() => window.InvestigationCanvas.store.state.search")
+    assert restored_search == 'persisted-normal-query'
+
     context.close()
     browser.close()
-
-print('Demo E2E passed; zero-click run completed with real tools and normal URL stayed idle')
+    print("ALL PLAYWRIGHT E2E ASSERTIONS PASSED!")
