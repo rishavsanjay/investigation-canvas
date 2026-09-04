@@ -1,24 +1,21 @@
 {
-  "name": "git-test",
+  "name": "investigation-canvas-repository",
   "version": "1.0.0",
-  "description": "This is a test",
-  "main": "index.html",
+  "description": "A shared visual reasoning workspace for people and WebMCP agents",
+  "private": true,
   "scripts": {
-    "start": "npm run lite",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "lite": "lite-server"
+    "start": "npm run serve",
+    "serve": "python3 -m http.server 4173 --directory investigation-canvas",
+    "test": "npm --prefix investigation-canvas test"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Rishav-dev/git-test.git"
+    "url": "git+https://github.com/rishavsanjay/git-test.git"
   },
-  "author": "Rishav-dev",
-  "license": "ISC",
+  "author": "rishavsanjay",
+  "license": "MIT",
   "bugs": {
-    "url": "https://github.com/Rishav-dev/git-test/issues"
+    "url": "https://github.com/rishavsanjay/git-test/issues"
   },
-  "homepage": "https://github.com/Rishav-dev/git-test#readme",
-  "devDependencies": {
-    "lite-server": "^2.6.1"
-  }
+  "homepage": "https://github.com/rishavsanjay/git-test#readme"
 }

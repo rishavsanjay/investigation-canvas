@@ -1,8 +1,13 @@
 [build]
   publish = "."
 
+[[redirects]]
+  from = "/"
+  to = "/investigation-canvas/"
+  status = 302
+
 [[headers]]
-  for = "/*"
+  for = "/investigation-canvas/*"
   [headers.values]
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"

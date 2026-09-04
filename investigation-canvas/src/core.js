@@ -5,6 +5,8 @@ export function unique(values) {
 }
 
 export function safeNumber(value) {
+  if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'object') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -18,12 +20,16 @@ export function formatNumber(value) {
   return n.toFixed(Math.abs(n) < 1 ? 3 : 2);
 }
 
-export function extent(records, field) {
+export function extent(records, field, padConstant = true) {
   const nums = records.map((r) => safeNumber(r[field])).filter((v) => v !== null);
   if (!nums.length) return [0, 1];
-  let min = Math.min(...nums);
-  let max = Math.max(...nums);
-  if (min === max) {
+  let min = nums[0];
+  let max = nums[0];
+  for (let i = 1; i < nums.length; i += 1) {
+    if (nums[i] < min) min = nums[i];
+    if (nums[i] > max) max = nums[i];
+  }
+  if (padConstant && min === max) {
     const pad = Math.abs(min || 1) * 0.1;
     min -= pad;
     max += pad;
@@ -82,31 +88,50 @@ export function normalizeFilter(filter) {
 
 export function recordMatchesFilter(record, rawFilter) {
   const filter = normalizeFilter(rawFilter);
-  if (!filter) return true;
+  if (!filter) return false;
   const value = record[filter.field];
   const lower = String(value ?? '').toLowerCase();
   const target = String(filter.value ?? '').toLowerCase();
   switch (filter.op) {
-    case 'eq': return String(value) === String(filter.value);
-    case 'neq': return String(value) !== String(filter.value);
+    case 'eq': return String(value ?? '') === String(filter.value ?? '');
+    case 'neq': return String(value ?? '') !== String(filter.value ?? '');
     case 'contains': return lower.includes(target);
-    case 'gt': return safeNumber(value) !== null && safeNumber(value) > Number(filter.value);
-    case 'gte': return safeNumber(value) !== null && safeNumber(value) >= Number(filter.value);
-    case 'lt': return safeNumber(value) !== null && safeNumber(value) < Number(filter.value);
-    case 'lte': return safeNumber(value) !== null && safeNumber(value) <= Number(filter.value);
+    case 'gt': {
+      const n = safeNumber(value);
+      const targetNum = safeNumber(filter.value);
+      return n !== null && targetNum !== null && n > targetNum;
+    }
+    case 'gte': {
+      const n = safeNumber(value);
+      const targetNum = safeNumber(filter.value);
+      return n !== null && targetNum !== null && n >= targetNum;
+    }
+    case 'lt': {
+      const n = safeNumber(value);
+      const targetNum = safeNumber(filter.value);
+      return n !== null && targetNum !== null && n < targetNum;
+    }
+    case 'lte': {
+      const n = safeNumber(value);
+      const targetNum = safeNumber(filter.value);
+      return n !== null && targetNum !== null && n <= targetNum;
+    }
     case 'between': {
       const n = safeNumber(value);
-      return n !== null && n >= Number(filter.min) && n <= Number(filter.max);
+      const minNum = safeNumber(filter.min);
+      const maxNum = safeNumber(filter.max);
+      return n !== null && minNum !== null && maxNum !== null && n >= minNum && n <= maxNum;
     }
     case 'in': {
       const values = Array.isArray(filter.value) ? filter.value.map(String) : String(filter.value ?? '').split(',').map((x) => x.trim());
-      return values.includes(String(value));
+      return values.includes(String(value ?? ''));
     }
-    default: return true;
+    default: return false;
   }
 }
 
 export function filterRecords(records, filters = [], search = '') {
+  if (!Array.isArray(records) || !Array.isArray(filters)) return [];
   const q = String(search || '').trim().toLowerCase();
   return records.filter((record) => {
     if (!filters.every((f) => recordMatchesFilter(record, f))) return false;
@@ -130,8 +155,8 @@ export function summarizeRecords(records, numericFields = []) {
     summary.metrics[field] = {
       mean: mean(records, field),
       median: median(records, field),
-      min: extent(records, field)[0],
-      max: extent(records, field)[1],
+      min: extent(records, field, false)[0],
+      max: extent(records, field, false)[1],
       stdev: stdev(records, field)
     };
   }
@@ -174,7 +199,9 @@ export function findOutliers(records, field, zThreshold = 2.5) {
   const sd = stdev(records, field);
   if (avg === null || !sd) return [];
   return records
-    .map((record) => ({ record, z: (Number(record[field]) - avg) / sd }))
+    .map((record) => ({ record, value: safeNumber(record[field]) }))
+    .filter(({ value }) => value !== null)
+    .map(({ record, value }) => ({ record, z: (value - avg) / sd }))
     .filter((x) => Math.abs(x.z) >= zThreshold)
     .sort((a, b) => Math.abs(b.z) - Math.abs(a.z));
 }
@@ -256,7 +283,8 @@ export function parseCsv(text) {
 export function inferDataset(records, title = 'Imported investigation') {
   const sample = records.slice(0, 100);
   const fields = unique(records.flatMap((r) => Object.keys(r))).filter((f) => f !== 'id');
-  const numericFields = fields.filter((field) => sample.filter((r) => safeNumber(r[field]) !== null).length >= Math.max(3, sample.length * 0.7));
+  const numericThreshold = sample.length ? Math.max(1, Math.ceil(sample.length * 0.7)) : Infinity;
+  const numericFields = fields.filter((field) => sample.filter((r) => safeNumber(r[field]) !== null).length >= numericThreshold);
   const timeField = fields.find((field) => /time|date/i.test(field) && sample.some((r) => !Number.isNaN(Date.parse(r[field]))));
   const keyFields = fields.filter((field) => !numericFields.includes(field) && field !== timeField).slice(0, 8);
   const x = numericFields[0] || fields[0];
@@ -298,7 +326,7 @@ export function findCounterevidence(hypothesis, documents = [], limit = 8) {
       const haystack = [doc.title, doc.type, doc.source, doc.text, ...(doc.tags || [])].join(' ').toLowerCase();
       const matchedTerms = terms.filter((term) => haystack.includes(term));
       const negationBonus = /normal|baseline|unchanged|independent|ruled out|no evidence|did not|does not|without/.test(haystack) ? 1.5 : 0;
-      return { document: doc, score: matchedTerms.length + negationBonus, matchedTerms };
+      return { document: doc, score: matchedTerms.length + (matchedTerms.length ? negationBonus : 0), matchedTerms };
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || String(a.document.id).localeCompare(String(b.document.id)))
@@ -325,7 +353,10 @@ export function buildReasoningGraph(hypotheses = [], documents = [], findings = 
   const addNode = (node) => { if (!seen.has(node.id)) { seen.add(node.id); nodes.push(node); } };
   for (const h of hypotheses) {
     addNode({ id: h.id, label: h.title, type: 'hypothesis', confidence: h.confidence, status: h.status });
-    if (h.parentId) edges.push({ source: h.parentId, target: h.id, label: h.forkReason || 'alternative' });
+    if (h.parentId) {
+      addNode({ id: h.parentId, label: hypotheses.find((candidate) => candidate.id === h.parentId)?.title || h.parentId, type: 'reference' });
+      edges.push({ source: h.parentId, target: h.id, label: h.forkReason || 'alternative' });
+    }
     for (const id of h.supporting || []) {
       const d = documents.find((x) => x.id === id);
       addNode({ id, label: d?.title || id, type: 'evidence', stance: 'supporting' });
@@ -338,7 +369,13 @@ export function buildReasoningGraph(hypotheses = [], documents = [], findings = 
     }
   }
   for (const f of findings) addNode({ id: f.id, label: f.title || f.text, type: 'finding', confidence: f.confidence });
-  for (const link of causalLinks) edges.push({ source: link.source, target: link.target, label: link.label || 'leads to', kind: 'causal' });
+  for (const link of causalLinks) {
+    const sourceLabel = documents.find((d) => d.id === link.source)?.title || hypotheses.find((h) => h.id === link.source)?.title || findings.find((f) => f.id === link.source)?.title || link.source;
+    const targetLabel = documents.find((d) => d.id === link.target)?.title || hypotheses.find((h) => h.id === link.target)?.title || findings.find((f) => f.id === link.target)?.title || link.target;
+    addNode({ id: link.source, label: sourceLabel, type: 'reference' });
+    addNode({ id: link.target, label: targetLabel, type: 'reference' });
+    edges.push({ source: link.source, target: link.target, label: link.label || 'leads to', kind: 'causal' });
+  }
   return { nodes, edges };
 }
 

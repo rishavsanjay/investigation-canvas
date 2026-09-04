@@ -32,15 +32,12 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install playwright
+          python -m pip install playwright==1.62.1
           python -m playwright install --with-deps chromium
           CHROMIUM_PATH="$(find "$HOME/.cache/ms-playwright" -type f -path '*/chrome-linux64/chrome' -print -quit)"
           test -n "$CHROMIUM_PATH"
           test -x "$CHROMIUM_PATH"
           echo "CHROMIUM_PATH=$CHROMIUM_PATH" >> "$GITHUB_ENV"
-          sudo ln -sf "$CHROMIUM_PATH" /usr/bin/chromium
-          sudo mkdir -p /mnt/data/investigation-canvas/assets
-          sudo chown -R "$USER":"$USER" /mnt/data
 
       - name: Boot app
         run: |
@@ -57,7 +54,14 @@ jobs:
       - name: Original browser E2E
         env:
           CHROMIUM_PATH: ${{ env.CHROMIUM_PATH }}
+          ARTIFACTS_DIR: /tmp/investigation-canvas-assets
         run: python investigation-canvas/tests/e2e.py
+
+      - name: Automatic demo E2E
+        env:
+          CHROMIUM_PATH: ${{ env.CHROMIUM_PATH }}
+          ARTIFACTS_DIR: /tmp/investigation-canvas-assets
+        run: python investigation-canvas/tests/demo_e2e.py
 
       - name: WebMCP Kit browser verification
         env:
@@ -72,8 +76,9 @@ jobs:
           name: investigation-canvas-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
           path: |
             /tmp/webmcp-kit-verification.json
-            /mnt/data/investigation-canvas/assets/e2e-desktop.png
-            /mnt/data/investigation-canvas/assets/e2e-mobile.png
+            /tmp/investigation-canvas-assets/e2e-desktop.png
+            /tmp/investigation-canvas-assets/e2e-mobile.png
+            /tmp/investigation-canvas-assets/demo-complete.png
             /tmp/investigation-canvas-server.log
           if-no-files-found: warn
           retention-days: 30

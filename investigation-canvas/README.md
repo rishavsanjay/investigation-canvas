@@ -112,7 +112,7 @@ This demonstrates shared attention and collaborative reasoning rather than simpl
 npm test
 ```
 
-The current suite contains **93 unit/integration tests** covering statistical analysis, filters, imports, store history, branches, hypotheses/evidence, rich evidence, counterevidence, findings, causal links, spatial-canvas state, export/import, WebMCP tool metadata, and agent-side state mutations.
+The current detailed suite contains **122 unit/integration assertions** covering statistical analysis, filters, imports, store history, branches, hypotheses/evidence, rich evidence, counterevidence, findings, causal links, spatial-canvas state, export/import, WebMCP tool metadata, and agent-side state mutations.
 
 A Playwright end-to-end test is included in `tests/e2e.py`. The recovery/verification workflow additionally runs a WebMCP Kit-style browser verification that requires all 48 tools to register and invokes every tool against local seeded data. The verified run recorded **48 verified, 0 failed, 0 could-not-verify**, with no browser console errors and visible UI effects confirmed for selection, filtering, hypotheses, and agent-created canvas views.
 

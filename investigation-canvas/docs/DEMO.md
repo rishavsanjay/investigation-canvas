@@ -1,3 +1,34 @@
+# Automatic Demo Mode
+
+## Exact URL
+
+To launch the zero-click, fully automatic guided demonstration:
+
+```
+http://127.0.0.1:4173/?demo=1
+```
+
+For fast automated tests and continuous integration checks, an optional `demoSpeed` query parameter controls the playback speed multiplier without altering the underlying tool execution or data:
+
+```
+http://127.0.0.1:4173/?demo=1&demoSpeed=10
+```
+
+Normal URLs without `?demo=1` (such as `http://127.0.0.1:4173/`) do not load or execute demo scripts or automated actions.
+
+## Disclosure Guidance
+
+When publishing video recordings, screen captures, or walkthroughs of this demo:
+
+1. **Automation Disclosure**: In the video narration or submission text, explain that this is an automated demo run. The interface distinguishes `AGENT` tool executions from the simulated `HUMAN CHALLENGE` without covering the product UI with a permanent disclosure tag.
+2. **Synthetic Data Disclosure**: The dataset is deterministic synthetic incident data (`checkout-regression`) generated locally for reproducible WebMCP evaluation. It represents no real company, users, or live production environment.
+3. **Real Tool Execution**: Disclose that no mock backend or fabricated analytical numbers are used during playback. Every agent action executes the real `createWebMcpTools(store)` handlers (`describe_workspace`, `select_where`, `compare_selection_to_rest`, `search_evidence`, `update_hypothesis`, `attach_evidence_to_hypothesis`, `focus_evidence`, `create_finding`, `create_canvas_view`, `get_selection`, `fork_hypothesis`, `get_activity_provenance`), and all statistical metrics in captions and findings are computed live from the active workspace state.
+4. **Human Interaction Simulation**: Make clear that the human challenge step simulates a user dragging a selection over desktop cohort records in the shared visual canvas to demonstrate how agents consume shared visual attention via `get_selection` rather than relying solely on chat prompts.
+
+During playback, a clearly labeled **Demo conversation** panel simulates the human/agent exchange and is wired around the real `createWebMcpTools(store).execute` handlers. It begins with five capability groups covering all 48 tools, then shows each action as Goal, Action, and Result with exact input/result JSON under collapsed technical details. A visible in-page simulated cursor moves between the affected controls and visualizations and pulses on interactions (it does not control the OS cursor). This panel is the automated demo runner; native ChatGPT tool-call UI appears only when a real ChatGPT agent initiates the WebMCP calls.
+
+---
+
 # 3-minute demo outline
 
 ## 0:00–0:25 — The problem
@@ -32,6 +63,6 @@ Open Provenance and show that human and agent selections, filters, tool calls, e
 
 ## 2:40–3:00 — Why WebMCP
 
-Show the WebMCP tool catalog. Explain that the same site exposes 35 structured actions over its semantic model, with read/write hints and explicit untrusted-output hints for source evidence.
+Show the WebMCP tool catalog. Explain that the same site exposes 48 structured actions over its semantic model, with read/write hints and explicit untrusted-output hints for source evidence.
 
 Close on the broader vision: investigation should be a shared visual workspace, not a chat transcript next to a dashboard.

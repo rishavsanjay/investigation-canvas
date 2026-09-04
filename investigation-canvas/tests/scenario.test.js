@@ -32,6 +32,19 @@ test('checkout demo also contains an independent desktop experiment regression',
   assert.ok(mean(affected,'conversion') < mean(control,'conversion') - .8);
 });
 
+test('checkout demo starts unresolved and discloses synthetic provenance', () => {
+  const d = SAMPLE_DATASETS.find(x=>x.id==='checkout-regression');
+  assert.equal(d.provenance.kind, 'synthetic');
+  assert.match(d.provenance.description, /generated locally/i);
+  assert.deepEqual(d.starterFindings, []);
+  assert.deepEqual(d.starterCausalLinks, []);
+  assert.ok(d.starterHypotheses.every(h => !(h.supporting?.length || h.contradicting?.length)));
+  assert.ok(d.records.every(r => !('severity' in r) && !('note' in r)));
+  const timestamps = [...d.records.map(r=>r.timestamp), ...d.documents.map(doc=>doc.timestamp)].map(value=>new Date(value).getTime());
+  assert.ok(Math.max(...timestamps) <= new Date('2026-09-04T23:59:59Z').getTime());
+  assert.ok(d.graph.edges.every(edge => !/ruled out|secondary effect/i.test(edge.label)));
+});
+
 test('ML demo crop failure is analytically recoverable', () => {
   const d = SAMPLE_DATASETS.find(x=>x.id==='model-regression');
   const bad = filterRecords(d.records,[{field:'dataset',op:'eq',value:'dataset-v7'},{field:'crop',op:'eq',value:'center-0.80'}]);

@@ -15,7 +15,7 @@ jobs:
           node-version: 22
       - name: Install browser harness
         working-directory: ci/visual
-        run: npm install
+        run: npm ci
       - name: Install Playwright Chromium
         working-directory: ci/visual
         run: npx playwright install --with-deps chromium
@@ -42,11 +42,12 @@ jobs:
       - name: Install harness and Chrome dependencies
         working-directory: ci/visual
         run: |
-          npm install
+          npm ci
           npx playwright install-deps chromium
       - name: Download Chrome for Testing 152
         run: |
           curl -fL --retry 3 -o /tmp/chrome.zip https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.75/linux64/chrome-linux64.zip
+          echo "a16d36890636bd72251133b27f05825f7f9269c2425b3408fa3a76e10dccd8f1  /tmp/chrome.zip" | sha256sum -c -
           unzip -q /tmp/chrome.zip -d /tmp/chrome-cft
           /tmp/chrome-cft/chrome-linux64/chrome --version
       - name: Serve native WebMCP probe fixture
@@ -97,7 +98,7 @@ jobs:
       - name: Install browser harness
         if: steps.app.outputs.present == 'true'
         working-directory: ci/visual
-        run: npm install
+        run: npm ci
       - name: Install Playwright Chromium
         if: steps.app.outputs.present == 'true'
         working-directory: ci/visual

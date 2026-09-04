@@ -5,9 +5,7 @@ import {
   filterRecords,
   formatNumber,
   groupCounts,
-  inferDataset,
   mean,
-  parseCsv,
   rankCorrelations,
   findOutliers,
   rankDiscriminatingFeatures,
@@ -16,6 +14,7 @@ import {
 import { SAMPLE_DATASETS } from './sampleData.js';
 import { createWebMcpTools, registerWebMcp } from './webmcp.js';
 import { renderSpatialCanvas, bindSpatialCanvasEvents, renderEvidenceMedia } from './workspace.js';
+import { loadFileSource, loadPublicApiSource } from './dataClient.js';
 // POST_ZIP_ENHANCEMENTS_V2: app
 
 const store = new InvestigationStore();
@@ -23,8 +22,39 @@ const root = document.getElementById('app');
 const fileInput = document.getElementById('file-input');
 const palette = ['#7aa2ff', '#62cfe5', '#bd9cff', '#66d19e', '#f4c96b', '#f0a35b', '#ff7d85', '#8fd0a9'];
 let modal = null;
+let modalReturnFocus = null;
+let evidenceSearch = '';
 let tooltip = null;
 let toastTimer = null;
+let scrollRestoreFrame = null;
+let pointPointerScroll = null;
+
+function captureViewportScroll() {
+  const content = document.querySelector('.content');
+  return {
+    contentTop: content?.scrollTop || 0,
+    contentLeft: content?.scrollLeft || 0,
+    windowX: window.scrollX,
+    windowY: window.scrollY
+  };
+}
+
+function scheduleViewportRestore(scroll) {
+  const restore = () => {
+    const content = document.querySelector('.content');
+    if (content) {
+      content.scrollTop = scroll.contentTop;
+      content.scrollLeft = scroll.contentLeft;
+    }
+    if (typeof window !== 'undefined') window.scrollTo(scroll.windowX, scroll.windowY);
+  };
+  restore();
+  if (scrollRestoreFrame !== null) cancelAnimationFrame(scrollRestoreFrame);
+  scrollRestoreFrame = requestAnimationFrame(() => {
+    restore();
+    scrollRestoreFrame = null;
+  });
+}
 
 const e = escapeHtml;
 const label = (field) => String(field || '—').replace(/([a-z])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, (c) => c.toUpperCase());
@@ -39,6 +69,9 @@ function toast(message) {
   if (!stack) {
     stack = document.createElement('div');
     stack.className = 'toast-stack';
+    stack.setAttribute('role', 'status');
+    stack.setAttribute('aria-live', 'polite');
+    stack.setAttribute('aria-atomic', 'true');
     document.body.appendChild(stack);
   }
   const el = document.createElement('div');
@@ -64,17 +97,19 @@ function metricCard(title, value, note, color = 'var(--accent)') {
 }
 
 function renderTopbar(s) {
-  const mcpText = s.webmcp.available ? `${s.webmcp.registered} WebMCP tools` : 'WebMCP preview';
+  const storageFailed = s.persistence?.ok === false;
+  const mcpText = storageFailed ? 'Storage warning' : s.webmcp.available ? `${s.webmcp.registered} WebMCP tools` : 'WebMCP preview';
   return `<header class="topbar">
     <div class="brand"><div class="brand-mark"></div><div><div class="brand-title">Investigation Canvas</div><div class="dataset-title">${e(s.dataset.title)}</div></div></div>
     <nav class="tabbar" aria-label="Workspace tabs">
       ${[['explore','Explore'],['canvas','Canvas'],['hypotheses','Hypotheses'],['evidence','Evidence'],['provenance','Provenance']].map(([id,name]) => `<button class="tab ${s.activeTab===id?'active':''}" data-tab="${id}">${name}</button>`).join('')}
     </nav>
     <div class="top-actions">
-      <span class="status-pill ${s.webmcp.available?'live':''}" title="${e(s.webmcp.lastError || '')}"><i class="status-dot"></i>${e(mcpText)}</span>
+      <span class="status-pill ${storageFailed?'error':s.webmcp.available?'live':''}" title="${e(storageFailed?s.persistence.lastError:s.webmcp.lastError || '')}"><i class="status-dot"></i>${e(mcpText)}</span>
       <button class="btn ghost" id="undo-btn" title="Undo">Undo</button>
       <button class="btn ghost" id="redo-btn" title="Redo">Redo</button>
       <button class="btn" id="import-btn">Import</button>
+      <button class="btn" id="api-btn">Connect API</button>
       <button class="btn primary" id="export-btn">Export</button>
     </div>
   </header>`;
@@ -95,6 +130,7 @@ function renderSidebar(s) {
         <div class="kv"><span>Records</span><strong>${visible.length.toLocaleString()} / ${s.dataset.records.length.toLocaleString()}</strong></div>
         <div class="kv"><span>Documents</span><strong>${s.dataset.documents.length}</strong></div>
         <div class="kv"><span>Relationships</span><strong>${s.dataset.graph.edges.length}</strong></div>
+        <div class="source-card"><span class="source-kind">${e(s.dataset.provenance?.kind || 'sample')}</span><strong>${e(s.dataset.provenance?.label || 'Bundled demo')}</strong><p>${e(s.dataset.provenance?.description || 'Local investigation dataset')}</p></div>
       </section>
       <section class="section">
         <div class="section-head"><span class="section-label">Search everything</span></div>
@@ -108,11 +144,11 @@ function renderSidebar(s) {
       </section>
       <section class="section">
         <div class="section-head"><span class="section-label">Saved views</span><button class="btn ghost" id="save-view">Save</button></div>
-        ${s.savedViews.length ? s.savedViews.slice(0,6).map(v => `<div class="saved-item" data-restore-view="${e(v.id)}"><div class="saved-item-title">${e(v.name)}</div><div class="saved-item-meta">${v.filters.length} filters · ${v.selection.length} selected</div></div>`).join('') : '<div class="empty" style="padding:12px 4px">No saved views yet</div>'}
+        ${s.savedViews.length ? s.savedViews.slice(0,6).map(v => `<div class="saved-item" role="button" tabindex="0" data-restore-view="${e(v.id)}"><div class="saved-item-title">${e(v.name)}</div><div class="saved-item-meta">${v.filters.length} filters · ${v.selection.length} selected</div></div>`).join('') : '<div class="empty" style="padding:12px 4px">No saved views yet</div>'}
       </section>
       <section class="section">
         <div class="section-head"><span class="section-label">Branches</span><button class="btn ghost" id="new-branch">Branch</button></div>
-        ${s.branches.length ? s.branches.slice(0,5).map(v => `<div class="saved-item" data-restore-branch="${e(v.id)}"><div class="saved-item-title">${e(v.name)}</div><div class="saved-item-meta">restorable analysis state</div></div>`).join('') : '<div class="empty" style="padding:12px 4px">No branches yet</div>'}
+        ${s.branches.length ? s.branches.slice(0,5).map(v => `<div class="saved-item" role="button" tabindex="0" data-restore-branch="${e(v.id)}"><div class="saved-item-title">${e(v.name)}</div><div class="saved-item-meta">restorable analysis state</div></div>`).join('') : '<div class="empty" style="padding:12px 4px">No branches yet</div>'}
       </section>
     </div>
   </aside>`;
@@ -130,13 +166,22 @@ function renderRightbar(s) {
     <div class="sidebar-header"><span class="sidebar-title">Agent + Activity</span><button class="btn icon ghost" id="toggle-right">${s.ui.rightCollapsed?'‹':'›'}</button></div>
     <div class="sidebar-body">
       <section class="section"><div class="agent-card"><h3>Shared attention</h3><p>The browser agent can read the same filters, selections, hypotheses, evidence, graph, and visual dimensions you manipulate here.</p>${agentSuggestions(s).map(p=>`<button class="prompt-chip" data-copy-prompt="${e(p)}">${e(p)}</button>`).join('')}</div></section>
+      <section class="section">
+        <div class="section-head"><span class="section-label">What you can do</span></div>
+        <div class="affordance-box">
+          <div class="affordance-item"><strong>Drag-select points</strong> on scatter/timeline to isolate cohorts</div>
+          <div class="affordance-item"><strong>Click records/evidence</strong> to inspect raw data and documents</div>
+          <div class="affordance-item"><strong>Add filters</strong> to test subsets and boundary conditions</div>
+          <div class="affordance-item"><strong>Challenge hypotheses</strong> by forking or attaching counterevidence</div>
+        </div>
+      </section>
       <section class="section"><div class="section-head"><span class="section-label">Current attention</span></div>
         <div class="kv"><span>Selected</span><strong>${s.selection.length}</strong></div>
         <div class="kv"><span>Filters</span><strong>${s.filters.length}</strong></div>
         <div class="kv"><span>Hypotheses</span><strong>${s.hypotheses.length}</strong></div>
         <div class="kv"><span>Annotations</span><strong>${s.annotations.length}</strong></div>
       </section>
-      <section class="section"><div class="section-head"><span class="section-label">Recent activity</span></div><div class="activity-list">${s.activity.slice(0,14).map(a=>`<div class="activity-item ${a.source==='agent'?'agent':''} ${a.kind==='error'?'error':''}"><div class="activity-meta"><span>${e(a.source)} · ${e(a.kind)}</span><span>${e(timeShort(a.at))}</span></div><div class="activity-text">${e(a.text)}</div></div>`).join('')}</div></section>
+      <section class="section"><div class="section-head"><span class="section-label">Recent activity</span><span class="section-sublabel">Full history in Provenance</span></div><div class="activity-list">${s.activity.slice(0,5).map(a=>`<div class="activity-item ${a.source==='agent'?'agent':''} ${a.kind==='error'?'error':''}"><div class="activity-meta"><span>${e(a.source)} · ${e(a.kind)}</span><span>${e(timeShort(a.at))}</span></div><div class="activity-text">${e(a.text)}</div></div>`).join('')}</div></section>
     </div>
   </aside>`;
 }
@@ -169,7 +214,7 @@ function scatterSvg(s, records) {
     const x=safeNumber(r[xField]), y=safeNumber(r[yField]); if(x===null||y===null)return '';
     const sel=selected.has(r.id); const muted=selected.size&&!sel;
     const rad = sel?4.3:2.8;
-    return `<circle class="point ${sel?'selected':''} ${muted?'muted':''}" data-record-id="${e(r.id)}" data-cx="${sx(x)}" data-cy="${sy(y)}" cx="${sx(x).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="${rad}" fill="${colorFor(r[colorField],colors)}"><title>${e(r.id)} · ${e(label(xField))} ${e(formatNumber(x))} · ${e(label(yField))} ${e(formatNumber(y))}</title></circle>`;
+    return `<circle class="point ${sel?'selected':''} ${muted?'muted':''}" role="button" tabindex="0" aria-label="Select record ${e(r.id)}" data-record-id="${e(r.id)}" data-cx="${sx(x)}" data-cy="${sy(y)}" cx="${sx(x).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="${rad}" fill="${colorFor(r[colorField],colors)}"><title>${e(r.id)} · ${e(label(xField))} ${e(formatNumber(x))} · ${e(label(yField))} ${e(formatNumber(y))}</title></circle>`;
   }).join('');
   const ticks = Array.from({length:5},(_,i)=>i/4);
   return `<svg id="scatter-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="Scatter plot"><g>${ticks.map(t=>{const x=L+t*(W-L-R);const v=xmin+t*(xmax-xmin);return `<line class="grid-line" x1="${x}" x2="${x}" y1="${T}" y2="${H-B}"/><text class="axis-label" x="${x}" y="${H-13}" text-anchor="middle">${e(formatNumber(v))}</text>`}).join('')}${ticks.map(t=>{const y=T+(1-t)*(H-T-B);const v=ymin+t*(ymax-ymin);return `<line class="grid-line" x1="${L}" x2="${W-R}" y1="${y}" y2="${y}"/><text class="axis-label" x="${L-7}" y="${y+3}" text-anchor="end">${e(formatNumber(v))}</text>`}).join('')}<line class="axis-line" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><line class="axis-line" x1="${L}" x2="${L}" y1="${T}" y2="${H-B}"/>${circles}<rect id="scatter-brush" class="brush-rect" width="0" height="0" visibility="hidden"/></g></svg>`;
@@ -178,7 +223,8 @@ function scatterSvg(s, records) {
 function renderScatter(s, records) {
   const fields = s.dataset.numericFields;
   const colors = groupCounts(records,s.dimensions.color).slice(0,8).map(x=>x.value);
-  return `<div class="card chart-card"><div class="card-head"><div><div class="card-title">Linked scatter</div><div class="card-subtitle">Drag to brush; click a point to focus</div></div><div class="card-actions"><select class="field-select" data-dim="x">${fields.map(f=>`<option value="${e(f)}" ${s.dimensions.x===f?'selected':''}>x: ${e(label(f))}</option>`).join('')}</select><select class="field-select" data-dim="y">${fields.map(f=>`<option value="${e(f)}" ${s.dimensions.y===f?'selected':''}>y: ${e(label(f))}</option>`).join('')}</select></div></div><div class="card-body"><div class="legend">${colors.map(v=>`<div class="legend-item"><i class="legend-swatch" style="background:${colorFor(v,colors)}"></i>${e(v)}</div>`).join('')}</div><div class="chart-wrap">${scatterSvg(s,records)}</div></div></div>`;
+  const sampling = records.length > 1800 ? ` · displaying first 1,800 of ${records.length.toLocaleString()}` : '';
+  return `<div class="card chart-card"><div class="card-head"><div><div class="card-title">Linked scatter</div><div class="card-subtitle">Visual correlation and cohort isolation: drag-select or click points to coordinate attention across all views${e(sampling)}</div></div><div class="card-actions"><select class="field-select" data-dim="x">${fields.map(f=>`<option value="${e(f)}" ${s.dimensions.x===f?'selected':''}>x: ${e(label(f))}</option>`).join('')}</select><select class="field-select" data-dim="y">${fields.map(f=>`<option value="${e(f)}" ${s.dimensions.y===f?'selected':''}>y: ${e(label(f))}</option>`).join('')}</select></div></div><div class="card-body"><div class="legend">${colors.map(v=>`<div class="legend-item"><i class="legend-swatch" style="background:${colorFor(v,colors)}"></i>${e(v)}</div>`).join('')}</div><div class="chart-wrap">${scatterSvg(s,records)}</div></div></div>`;
 }
 
 function renderTimeline(s, records) {
@@ -192,14 +238,14 @@ function renderTimeline(s, records) {
   const step=Math.max(1,Math.floor(timed.length/220)); const sampled=timed.filter((_,i)=>i%step===0||i===timed.length-1);
   const path=sampled.map((r,i)=>`${i?'L':'M'}${sx(r[timeField]).toFixed(1)},${sy(r[yField]).toFixed(1)}`).join(' ');
   const selected=new Set(s.selection);
-  return `<div class="card"><div class="card-head"><div><div class="card-title">Timeline</div><div class="card-subtitle">${e(label(yField))} over ${e(label(timeField))}</div></div></div><div class="card-body"><div class="chart-wrap small"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line class="axis-line" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><path d="${path}" fill="none" stroke="#7aa2ff" stroke-width="1.8" opacity=".8"/>${sampled.map(r=>`<circle class="point ${selected.has(r.id)?'selected':''} ${selected.size&&!selected.has(r.id)?'muted':''}" data-record-id="${e(r.id)}" cx="${sx(r[timeField]).toFixed(1)}" cy="${sy(r[yField]).toFixed(1)}" r="${selected.has(r.id)?3.6:2.1}" fill="${r.severity==='critical'?'#ff7d85':r.severity==='warning'?'#f4c96b':'#7aa2ff'}"><title>${e(timeShort(r[timeField]))} · ${e(label(yField))}: ${e(formatNumber(r[yField]))}</title></circle>`).join('')}<text class="axis-label" x="${L}" y="${H-10}">${e(timeShort(timed[0][timeField]))}</text><text class="axis-label" x="${W-R}" y="${H-10}" text-anchor="end">${e(timeShort(timed[timed.length-1][timeField]))}</text></svg></div></div></div>`;
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Timeline</div><div class="card-subtitle">${e(label(yField))} over ${e(label(timeField))}</div></div></div><div class="card-body"><div class="chart-wrap small"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line class="axis-line" x1="${L}" x2="${W-R}" y1="${H-B}" y2="${H-B}"/><path d="${path}" fill="none" stroke="#7aa2ff" stroke-width="1.8" opacity=".8"/>${sampled.map(r=>`<circle class="point ${selected.has(r.id)?'selected':''} ${selected.size&&!selected.has(r.id)?'muted':''}" role="button" tabindex="0" aria-label="Select record ${e(r.id)}" data-record-id="${e(r.id)}" cx="${sx(r[timeField]).toFixed(1)}" cy="${sy(r[yField]).toFixed(1)}" r="${selected.has(r.id)?3.6:2.1}" fill="${r.severity==='critical'?'#ff7d85':r.severity==='warning'?'#f4c96b':'#7aa2ff'}"><title>${e(timeShort(r[timeField]))} · ${e(label(yField))}: ${e(formatNumber(r[yField]))}</title></circle>`).join('')}<text class="axis-label" x="${L}" y="${H-10}">${e(timeShort(timed[0][timeField]))}</text><text class="axis-label" x="${W-R}" y="${H-10}" text-anchor="end">${e(timeShort(timed[timed.length-1][timeField]))}</text></svg></div></div></div>`;
 }
 
 function renderTable(s, records) {
   const selected=new Set(s.selection);
   const columns=['id',s.dimensions.time,...s.dataset.keyFields.slice(0,4),...s.dataset.numericFields.slice(0,4)].filter(Boolean);
   const uniqueCols=[...new Set(columns)];
-  return `<div class="card"><div class="card-head"><div><div class="card-title">Evidence table</div><div class="card-subtitle">Showing first ${Math.min(200,records.length)} of ${records.length} visible records</div></div></div><div class="card-body"><div class="table-wrap"><table><thead><tr>${uniqueCols.map(c=>`<th>${e(label(c))}</th>`).join('')}</tr></thead><tbody>${records.slice(0,200).map(r=>`<tr data-row-id="${e(r.id)}" class="${selected.has(r.id)?'selected-row':''} ${s.focusedRecordId===r.id?'focused-row':''}">${uniqueCols.map(c=>`<td>${c==='severity'?`<span class="severity ${e(r[c])}">${e(r[c])}</span>`:c===s.dimensions.time?e(timeShort(r[c])):e(formatNumber(r[c]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></div>`;
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Evidence table</div><div class="card-subtitle">Showing first ${Math.min(200,records.length)} of ${records.length} visible records</div></div></div><div class="card-body"><div class="table-wrap"><table><thead><tr>${uniqueCols.map(c=>`<th>${e(label(c))}</th>`).join('')}</tr></thead><tbody>${records.slice(0,200).map(r=>`<tr role="button" tabindex="0" aria-label="Select record ${e(r.id)}" data-row-id="${e(r.id)}" class="${selected.has(r.id)?'selected-row':''} ${s.focusedRecordId===r.id?'focused-row':''}">${uniqueCols.map(c=>`<td>${c==='severity'?`<span class="severity ${e(r[c])}">${e(r[c])}</span>`:c===s.dimensions.time?e(timeShort(r[c])):e(formatNumber(r[c]))}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div></div>`;
 }
 
 function renderGraph(s) {
@@ -207,7 +253,7 @@ function renderGraph(s) {
   if(!nodes.length) return `<div class="card"><div class="card-head"><div class="card-title">Relationship graph</div></div><div class="empty">No relationship graph imported</div></div>`;
   const W=520,H=310,cx=W/2,cy=H/2,rx=185,ry=110;
   const pos=new Map(nodes.map((n,i)=>[n.id,{x:cx+Math.cos((i/nodes.length)*Math.PI*2-Math.PI/2)*rx,y:cy+Math.sin((i/nodes.length)*Math.PI*2-Math.PI/2)*ry}]));
-  return `<div class="card"><div class="card-head"><div><div class="card-title">Relationship graph</div><div class="card-subtitle">Entities and evidence relationships</div></div></div><div class="card-body"><div class="graph-wrap"><svg viewBox="0 0 ${W} ${H}">${edges.map(ed=>{const a=pos.get(ed.source),b=pos.get(ed.target);if(!a||!b)return'';const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;return `<line class="graph-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><text class="graph-edge-label" x="${mx}" y="${my-4}" text-anchor="middle">${e(ed.label)}</text>`}).join('')}${nodes.map(n=>{const p=pos.get(n.id);return `<g class="graph-node ${s.focusedGraphNodeId===n.id?'focused':''}" data-node-id="${e(n.id)}"><circle cx="${p.x}" cy="${p.y}" r="27"/><text x="${p.x}" y="${p.y-2}" text-anchor="middle">${e(n.label.length>16?n.label.slice(0,15)+'…':n.label)}</text><text class="axis-label" x="${p.x}" y="${p.y+10}" text-anchor="middle">${e(n.type)}</text></g>`}).join('')}</svg></div></div></div>`;
+  return `<div class="card"><div class="card-head"><div><div class="card-title">Relationship graph</div><div class="card-subtitle">Entities and evidence relationships</div></div></div><div class="card-body"><div class="graph-wrap"><svg viewBox="0 0 ${W} ${H}">${edges.map(ed=>{const a=pos.get(ed.source),b=pos.get(ed.target);if(!a||!b)return'';const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;return `<line class="graph-edge" x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}"/><text class="graph-edge-label" x="${mx}" y="${my-4}" text-anchor="middle">${e(ed.label)}</text>`}).join('')}${nodes.map(n=>{const p=pos.get(n.id);return `<g class="graph-node ${s.focusedGraphNodeId===n.id?'focused':''}" role="button" tabindex="0" aria-label="Focus graph node ${e(n.label)}" data-node-id="${e(n.id)}"><circle cx="${p.x}" cy="${p.y}" r="27"/><text x="${p.x}" y="${p.y-2}" text-anchor="middle">${e(n.label.length>16?n.label.slice(0,15)+'…':n.label)}</text><text class="axis-label" x="${p.x}" y="${p.y+10}" text-anchor="middle">${e(n.type)}</text></g>`}).join('')}</svg></div></div></div>`;
 }
 
 function renderSelectionAnalysis(s, records) {
@@ -242,17 +288,17 @@ function renderSignals(s, records) {
 
 function renderExplore(s) {
   const records=store.getVisibleRecords();
-  return `${renderKpis(s,records)}${renderSelectionAnalysis(s,records)}<div class="grid analysis">${renderScatter(s,records)}${renderTimeline(s,records)}</div><div style="margin-top:10px">${renderSignals(s,records)}</div><div class="grid bottom">${renderTable(s,records)}${renderGraph(s)}</div>`;
+  return `${renderKpis(s,records)}<div class="grid analysis">${renderScatter(s,records)}${renderTimeline(s,records)}</div><div style="margin-top:10px">${renderSelectionAnalysis(s,records)}${renderSignals(s,records)}</div><div class="grid bottom">${renderTable(s,records)}${renderGraph(s)}</div>`;
 }
 
 function evidenceName(s,id){return s.dataset.documents.find(d=>d.id===id)?.title||id;}
 function renderHypotheses(s) {
-  return `<div class="page-heading hypothesis-heading"><div><div style="font-size:15px;font-weight:760">Competing hypotheses</div><div class="card-subtitle">Track support, contradictions, falsification questions, and confidence as the investigation evolves.</div></div><button class="btn primary" id="add-hypothesis">New hypothesis</button></div><div class="hypothesis-grid">${s.hypotheses.map(h=>`<article class="hypothesis-card"><div class="hypothesis-head"><div><div class="hypothesis-title">${e(h.title)}</div><div style="margin-top:7px"><span class="status ${e(h.status)}">${e(h.status)}</span></div></div><div class="confidence"><strong>${Math.round(h.confidence)}%</strong><span>confidence</span></div></div><div class="confidence-bar"><i style="width:${Math.max(0,Math.min(100,h.confidence))}%"></i></div><div class="hypothesis-body"><div style="font-size:10px;color:var(--muted);line-height:1.5">${e(h.notes||'No reasoning note yet.')}</div><div class="evidence-columns"><div class="evidence-box"><h4>Supporting</h4>${h.supporting.length?h.supporting.map(id=>`<button class="evidence-ref" data-focus-doc="${e(id)}">+ ${e(evidenceName(s,id))}</button>`).join(''):'<span class="card-subtitle">None attached</span>'}</div><div class="evidence-box"><h4>Contradicting</h4>${h.contradicting.length?h.contradicting.map(id=>`<button class="evidence-ref" data-focus-doc="${e(id)}">− ${e(evidenceName(s,id))}</button>`).join(''):'<span class="card-subtitle">None attached</span>'}</div></div>${h.questions?.length?`<ul class="question-list">${h.questions.map(q=>`<li>${e(q)}</li>`).join('')}</ul>`:''}${h.parentId?`<div class="fork-badge">Alternative fork of ${e(h.parentId)} · ${e(h.forkReason||'alternative explanation')}</div>`:''}<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"><button class="btn" data-edit-hypothesis="${e(h.id)}">Edit</button><button class="btn ghost" data-attach-evidence="${e(h.id)}">Attach evidence</button><button class="btn ghost" data-fork-hypothesis="${e(h.id)}">Fork</button><button class="btn ghost" data-find-counterevidence="${e(h.id)}">Counterevidence</button></div></div></article>`).join('')||'<div class="empty">No hypotheses yet. Create at least two competing explanations and try to falsify them.</div>'}</div>`;
+  return `<div class="page-heading hypothesis-heading"><div><div style="font-size:15px;font-weight:760">Competing hypotheses</div><div class="card-subtitle">Falsification framework: track competing explanations, confidence scores, and counterevidence side-by-side as the investigation evolves.</div></div><button class="btn primary" id="add-hypothesis">New hypothesis</button></div><div class="hypothesis-grid">${s.hypotheses.map(h=>`<article class="hypothesis-card"><div class="hypothesis-head"><div><div class="hypothesis-title">${e(h.title)}</div><div style="margin-top:7px"><span class="status ${e(h.status)}">${e(h.status)}</span></div></div><div class="confidence"><strong>${Math.round(h.confidence)}%</strong><span>confidence</span></div></div><div class="confidence-bar"><i style="width:${Math.max(4,h.confidence)}%"></i></div><div class="hypothesis-body"><div class="hypothesis-notes">${e(h.notes||'No reasoning notes recorded')}</div>${h.questions?.length?`<div class="field-group"><span class="field-label">Falsification questions</span><ul class="question-list">${h.questions.map(q=>`<li>${e(q)}</li>`).join('')}</ul></div>`:''}<div class="field-group"><span class="field-label">Supporting evidence (${h.supporting?.length||0})</span><div class="chip-row">${(h.supporting||[]).map(id=>`<button class="evidence-chip" data-focus-doc="${e(id)}">${e(evidenceName(s,id))}</button>`).join('')||'<span class="empty-note">None attached</span>'}</div></div><div class="field-group"><span class="field-label">Contradicting evidence (${h.contradicting?.length||0})</span><div class="chip-row">${(h.contradicting||[]).map(id=>`<button class="evidence-chip contradicting" data-focus-doc="${e(id)}">${e(evidenceName(s,id))}</button>`).join('')||'<span class="empty-note">None attached</span>'}</div></div></div><div class="hypothesis-actions"><button class="btn ghost" data-edit-hypothesis="${e(h.id)}">Edit</button><button class="btn ghost" data-attach-evidence="${e(h.id)}">Attach evidence</button><button class="btn ghost" data-fork-hypothesis="${e(h.id)}">Fork alternative</button><button class="btn ghost" data-find-counterevidence="${e(h.id)}">Find counterevidence</button></div></article>`).join('')}</div>`;
 }
 
 function renderEvidence(s) {
   const focused=s.focusedDocumentId?s.dataset.documents.find(d=>d.id===s.focusedDocumentId):null;
-  return `<div class="page-heading evidence-heading"><div><div style="font-size:15px;font-weight:760">Evidence library</div><div class="card-subtitle">Source material stays distinct from model reasoning. Untrusted evidence is explicitly marked for WebMCP agents.</div></div><input class="search evidence-search" id="evidence-search" placeholder="Search documents" /></div>${focused?`<div class="card" style="margin-bottom:10px"><div class="card-head"><div><div class="card-title">${e(focused.title)}</div><div class="card-subtitle">${e(focused.source)} · ${e(focused.type)} · ${e(timeShort(focused.timestamp))}</div></div><span class="trust ${focused.trust==='untrusted'?'untrusted':''}">${e(focused.trust)}</span></div><div class="card-body" style="color:#c5cfda;font-size:12px;line-height:1.65">${renderEvidenceMedia(focused)}<div style="margin-top:${focused.mediaType?'10px':'0'}">${e(focused.text)}</div></div></div>`:''}<div class="document-list" id="document-list">${s.dataset.documents.map(d=>`<article class="document-card ${s.focusedDocumentId===d.id?'focused':''}" data-doc-id="${e(d.id)}" data-doc-search="${e([d.title,d.type,d.source,d.text,...(d.tags||[])].join(' ').toLowerCase())}"><div class="doc-top"><span class="doc-type">${e(d.type)}</span><span class="trust ${d.trust==='untrusted'?'untrusted':''}">${e(d.trust)}</span></div><div class="doc-title">${e(d.title)}</div><div class="doc-text">${e(d.text)}</div><div class="tags">${(d.tags||[]).map(t=>`<span class="tag">${e(t)}</span>`).join('')}</div></article>`).join('')||'<div class="empty">No documents imported</div>'}</div>`;
+  return `<div class="page-heading evidence-heading"><div><div style="font-size:15px;font-weight:760">Evidence library</div><div class="card-subtitle">Auditable ground truth: raw documents, release notes, and telemetry distinct from model reasoning. Untrusted evidence is explicitly marked for WebMCP agents.</div></div><input class="search evidence-search" id="evidence-search" value="${e(evidenceSearch)}" placeholder="Search documents" /></div>${focused?`<div class="card" style="margin-bottom:10px"><div class="card-head"><div><div class="card-title">${e(focused.title)}</div><div class="card-subtitle">${e(focused.source)} · ${e(focused.type)} · ${e(timeShort(focused.timestamp))}</div></div><span class="trust ${focused.trust==='untrusted'?'untrusted':''}">${e(focused.trust)}</span></div><div class="card-body"><div class="doc-body">${focused.mediaType?renderEvidenceMedia(focused):''}<div class="doc-text">${e(focused.content)}</div>${focused.tags?.length?`<div class="chip-row" style="margin-top:10px">${focused.tags.map(t=>`<span class="tag-chip">#${e(t)}</span>`).join('')}</div>`:''}</div></div></div>`:''}<div class="evidence-grid">${s.dataset.documents.map(d=>`<article class="card evidence-card ${s.focusedDocumentId===d.id?'focused-card':''}" role="button" tabindex="0" aria-label="Open evidence document ${e(d.title)}" data-doc-id="${e(d.id)}" data-doc-search="${e(`${d.title} ${d.source} ${d.type} ${d.content} ${(d.tags||[]).join(' ')}`.toLowerCase())}"><div class="card-head"><div><div class="card-title">${e(d.title)}</div><div class="card-subtitle">${e(d.source)} · ${e(d.type)}</div></div><span class="trust ${d.trust==='untrusted'?'untrusted':''}">${e(d.trust)}</span></div><div class="card-body"><p class="line-clamp">${e(d.content)}</p>${d.mediaType?`<div class="media-badge">Media: ${e(d.mediaType)}</div>`:''}<div class="meta-row" style="margin-top:8px"><span>${e(timeShort(d.timestamp))}</span>${d.tags?.length?`<span>#${e(d.tags[0])}</span>`:''}</div></div></article>`).join('')}</div>`;
 }
 
 function renderProvenance(s) {
@@ -266,34 +312,119 @@ function renderMain(s) {
 
 function render() {
   const s=store.state;
+  const scroll = captureViewportScroll();
+  let active = null;
+  if (root.contains(document.activeElement) && document.activeElement.id) {
+    let start = null, end = null;
+    try {
+      start = document.activeElement.selectionStart;
+      end = document.activeElement.selectionEnd;
+    } catch {}
+    active = { id: document.activeElement.id, start, end };
+  }
   root.innerHTML=`<div class="app-shell">${renderTopbar(s)}<div class="workspace ${s.ui.leftCollapsed?'left-collapsed':''} ${s.ui.rightCollapsed?'right-collapsed':''}">${renderSidebar(s)}${renderMain(s)}${renderRightbar(s)}</div></div>`;
-  if(modal) renderModal();
+  if(modal && !document.querySelector('.modal-backdrop')) renderModal();
   bindEvents();
+  const evidenceInput = document.querySelector('#evidence-search');
+  if (evidenceInput) {
+    const query = evidenceSearch.toLowerCase();
+    document.querySelectorAll('[data-doc-search]').forEach((card) => card.classList.toggle('hidden', !card.dataset.docSearch.includes(query)));
+  }
+  if (active) {
+    const replacement = document.getElementById(active.id);
+    if (replacement) {
+      replacement.focus({ preventScroll: true });
+      if (typeof replacement.setSelectionRange === 'function' && active.start !== null) {
+        try { replacement.setSelectionRange(active.start, active.end); } catch {}
+      }
+    }
+  }
+  scheduleViewportRestore(scroll);
 }
 
-function showModal(kind,data={}) { modal={kind,data}; renderModal(); }
-function closeModal(){ modal=null; document.querySelector('.modal-backdrop')?.remove(); }
+function showModal(kind,data={}) {
+  if (!modalReturnFocus || !document.body.contains(modalReturnFocus)) {
+    modalReturnFocus = document.activeElement;
+  }
+  modal = { kind, data };
+  renderModal();
+}
+function closeModal(){
+  const target = modalReturnFocus;
+  modal = null;
+  modalReturnFocus = null;
+  document.querySelector('.modal-backdrop')?.remove();
+  if (target) {
+    if (document.body.contains(target)) {
+      target.focus?.();
+    } else if (target.id && document.getElementById(target.id)) {
+      document.getElementById(target.id).focus();
+    } else if (target.dataset) {
+      const match = Object.entries(target.dataset).find(([k, v]) => v);
+      if (match) {
+        const attr = match[0].replace(/([A-Z])/g, '-$1').toLowerCase();
+        const el = document.querySelector(`[data-${attr}="${CSS.escape(match[1])}"]`);
+        el?.focus?.();
+      }
+    }
+  }
+}
 function renderModal(){
   document.querySelector('.modal-backdrop')?.remove(); if(!modal)return;
   const wrap=document.createElement('div');wrap.className='modal-backdrop';
   if(modal.kind==='hypothesis'){
     const h=modal.data.h||{};
-    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>${h.id?'Edit':'Create'} hypothesis</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body"><div class="form-grid"><div class="field"><label>Falsifiable statement</label><textarea id="hyp-title">${e(h.title||'')}</textarea></div><div class="form-grid two"><div class="field"><label>Confidence 0–100</label><input id="hyp-confidence" type="number" min="0" max="100" value="${e(h.confidence??50)}" /></div><div class="field"><label>Status</label><select id="hyp-status">${['testing','supported','weakened','rejected','unresolved'].map(x=>`<option ${h.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="field"><label>Questions that could falsify it (one per line)</label><textarea id="hyp-questions">${e((h.questions||[]).join('\n'))}</textarea></div><div class="field"><label>Reasoning note</label><textarea id="hyp-notes">${e(h.notes||'')}</textarea></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-hypothesis">Save hypothesis</button></div></div></div>`;
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>${h.id?'Edit':'Create'} hypothesis</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body"><div class="form-grid"><div class="field"><label for="hyp-title">Falsifiable statement</label><textarea id="hyp-title">${e(h.title||'')}</textarea></div><div class="form-grid two"><div class="field"><label for="hyp-confidence">Confidence 0–100</label><input id="hyp-confidence" type="number" min="0" max="100" value="${e(h.confidence??50)}" /></div><div class="field"><label for="hyp-status">Status</label><select id="hyp-status">${['testing','supported','weakened','rejected','unresolved'].map(x=>`<option ${h.status===x?'selected':''}>${x}</option>`).join('')}</select></div></div><div class="field"><label for="hyp-questions">Questions that could falsify it (one per line)</label><textarea id="hyp-questions">${e((h.questions||[]).join('\n'))}</textarea></div><div class="field"><label for="hyp-notes">Reasoning note</label><textarea id="hyp-notes">${e(h.notes||'')}</textarea></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-hypothesis">Save hypothesis</button></div></div></div>`;
   } else if(modal.kind==='attach'){
     const h=store.state.hypotheses.find(x=>x.id===modal.data.hypothesisId);
-    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Attach evidence</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body"><div class="field"><label>Hypothesis</label><div style="font-size:12px">${e(h?.title||'')}</div></div><div class="field" style="margin-top:10px"><label>Evidence document</label><select id="attach-doc">${store.state.dataset.documents.map(d=>`<option value="${e(d.id)}">${e(d.title)}</option>`).join('')}</select></div><div class="field" style="margin-top:10px"><label>Stance</label><select id="attach-stance"><option value="supporting">Supporting</option><option value="contradicting">Contradicting</option></select></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-attach">Attach</button></div></div></div>`;
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Attach evidence</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body"><div class="field"><span class="field-label">Hypothesis</span><div style="font-size:12px">${e(h?.title||'')}</div></div><div class="field" style="margin-top:10px"><label for="attach-doc">Evidence document</label><select id="attach-doc">${store.state.dataset.documents.map(d=>`<option value="${e(d.id)}">${e(d.title)}</option>`).join('')}</select></div><div class="field" style="margin-top:10px"><label for="attach-stance">Stance</label><select id="attach-stance"><option value="supporting">Supporting</option><option value="contradicting">Contradicting</option></select></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-attach">Attach</button></div></div></div>`;
   } else if(modal.kind==='annotation'){
-    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Add annotation</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body"><div class="form-grid"><div class="field"><label>Target</label><select id="ann-target"><option>workspace</option><option>selection</option><option>record</option><option>document</option><option>graph-node</option><option>hypothesis</option></select></div><div class="field"><label>Target ID (optional)</label><input id="ann-id" /></div><div class="field"><label>Annotation</label><textarea id="ann-text"></textarea></div><div class="field"><label>Tone</label><select id="ann-tone"><option>finding</option><option>question</option><option>warning</option><option>note</option></select></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-annotation">Add annotation</button></div></div></div>`;
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Add annotation</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body"><div class="form-grid"><div class="field"><label for="ann-target">Target</label><select id="ann-target"><option>workspace</option><option>selection</option><option>record</option><option>document</option><option>graph-node</option><option>hypothesis</option></select></div><div class="field"><label for="ann-id">Target ID (optional)</label><input id="ann-id" /></div><div class="field"><label for="ann-text">Annotation</label><textarea id="ann-text"></textarea></div><div class="field"><label for="ann-tone">Tone</label><select id="ann-tone"><option>finding</option><option>question</option><option>warning</option><option>note</option></select></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="save-annotation">Add annotation</button></div></div></div>`;
   } else if(modal.kind==='tools'){
     const tools=createWebMcpTools(store);
-    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>WebMCP tool catalog (${tools.length})</h2><button class="btn icon ghost" data-close-modal>×</button></div><div class="modal-body">${tools.map(t=>`<div class="saved-item"><div class="saved-item-title"><code>${e(t.name)}</code> <span class="status">${t.annotations?.readOnlyHint?'read':'write'}</span>${t.annotations?.untrustedContentHint?'<span class="status weakened" style="margin-left:4px">untrusted output</span>':''}</div><div class="saved-item-meta" style="line-height:1.4">${e(t.description)}</div></div>`).join('')}</div></div>`;
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>WebMCP tool catalog (${tools.length})</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body">${tools.map(t=>`<div class="saved-item"><div class="saved-item-title"><code>${e(t.name)}</code> <span class="status">${t.annotations?.readOnlyHint?'read':'write'}</span>${t.annotations?.untrustedContentHint?'<span class="status weakened" style="margin-left:4px">untrusted output</span>':''}</div><div class="saved-item-meta" style="line-height:1.4">${e(t.description)}</div></div>`).join('')}</div></div>`;
+  } else if(modal.kind==='api'){
+    wrap.innerHTML=`<div class="modal"><div class="modal-head"><h2>Connect a public JSON API</h2><button class="btn icon ghost" data-close-modal aria-label="Close dialog">×</button></div><div class="modal-body"><p class="modal-copy">Load a read-only HTTPS endpoint directly into this browser. No credentials, cookies, or tokens are sent. The API must allow browser CORS requests.</p><div class="form-grid"><div class="field"><label for="api-url">HTTPS endpoint</label><input id="api-url" type="url" required placeholder="https://api.example.com/events" /></div><div class="form-grid two"><div class="field"><label for="api-records-path">Records path (optional)</label><input id="api-records-path" placeholder="data.items" /></div><div class="field"><label for="api-title">Dataset title (optional)</label><input id="api-title" placeholder="Production events" /></div></div><div id="api-error" class="form-error" role="alert"></div></div><div class="modal-actions"><button class="btn ghost" data-close-modal>Cancel</button><button class="btn primary" id="load-api">Load API snapshot</button></div></div></div>`;
   }
+  const dialog=wrap.querySelector('.modal');
+  const heading=dialog?.querySelector('h2');
+  if(dialog){dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');if(heading){heading.id='modal-title';dialog.setAttribute('aria-labelledby','modal-title');}}
   document.body.appendChild(wrap);
   wrap.querySelectorAll('[data-close-modal]').forEach(b=>b.addEventListener('click',closeModal));
   wrap.addEventListener('click',ev=>{if(ev.target===wrap)closeModal();});
+  wrap.addEventListener('keydown',(event)=>{
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModal();
+      return;
+    }
+    if(event.key!=='Tab')return;
+    const focusable=[...wrap.querySelectorAll('button,input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter((element)=>!element.disabled);
+    if(!focusable.length)return;
+    const first=focusable[0],last=focusable.at(-1);
+    if(event.shiftKey&&document.activeElement===first){
+      event.preventDefault();
+      last.focus();
+    }else if(!event.shiftKey&&document.activeElement===last){
+      event.preventDefault();
+      first.focus();
+    }
+  });
   wrap.querySelector('#save-hypothesis')?.addEventListener('click',()=>{const input={title:document.querySelector('#hyp-title').value.trim(),confidence:Number(document.querySelector('#hyp-confidence').value),status:document.querySelector('#hyp-status').value,questions:document.querySelector('#hyp-questions').value.split('\n').map(x=>x.trim()).filter(Boolean),notes:document.querySelector('#hyp-notes').value.trim()};if(!input.title)return toast('Hypothesis needs a statement'); if(modal.data.h?.id)store.updateHypothesis(modal.data.h.id,input);else store.addHypothesis(input);closeModal();});
   wrap.querySelector('#save-attach')?.addEventListener('click',()=>{store.attachEvidence(modal.data.hypothesisId,document.querySelector('#attach-doc').value,document.querySelector('#attach-stance').value);closeModal();});
   wrap.querySelector('#save-annotation')?.addEventListener('click',()=>{const text=document.querySelector('#ann-text').value.trim();if(!text)return;store.addAnnotation({targetType:document.querySelector('#ann-target').value,targetId:document.querySelector('#ann-id').value.trim(),text,tone:document.querySelector('#ann-tone').value});closeModal();});
+  wrap.querySelector('#load-api')?.addEventListener('click',async()=>{
+    const button=wrap.querySelector('#load-api'), error=wrap.querySelector('#api-error');
+    const url=wrap.querySelector('#api-url').value.trim();
+    if(!url){error.textContent='Enter an HTTPS endpoint.';return;}
+    button.disabled=true;button.textContent='Loading…';error.textContent='';
+    try{
+      const result=await loadPublicApiSource({url,recordsPath:wrap.querySelector('#api-records-path').value.trim(),title:wrap.querySelector('#api-title').value.trim()});
+      store.loadCustomDataset(result.dataset);closeModal();toast(`Loaded ${result.dataset.records.length.toLocaleString()} API records`);
+    }catch(loadError){error.textContent=loadError.message;button.disabled=false;button.textContent='Load API snapshot';}
+  });
+  const initialFocus = wrap.querySelector('.modal-body input, .modal-body textarea, .modal-body select, .modal-body button, [tabindex]:not([tabindex="-1"])') || wrap.querySelector('textarea, input, select, button');
+  initialFocus?.focus();
 }
 
 function bindEvents(){
@@ -302,7 +433,7 @@ function bindEvents(){
   document.querySelector('#toggle-right')?.addEventListener('click',()=>store.mutate(s=>{s.ui.rightCollapsed=!s.ui.rightCollapsed;},{history:false}));
   document.querySelector('#undo-btn')?.addEventListener('click',()=>store.undo()||toast('Nothing to undo'));
   document.querySelector('#redo-btn')?.addEventListener('click',()=>store.redo()||toast('Nothing to redo'));
-  document.querySelector('#dataset-switcher')?.addEventListener('change',ev=>{if(SAMPLE_DATASETS.some(d=>d.id===ev.target.value))store.loadDataset(ev.target.value)});
+  document.querySelector('#dataset-switcher')?.addEventListener('change',ev=>{if(!SAMPLE_DATASETS.some(d=>d.id===ev.target.value))return;if(store.hasWorkspaceChanges()&&!confirm('Switch datasets and discard the current workspace changes?')){ev.target.value=store.state.dataset.id;return;}closeModal();evidenceSearch='';store.loadDataset(ev.target.value)});
   document.querySelector('#global-search')?.addEventListener('keydown',ev=>{if(ev.key==='Enter')store.setSearch(ev.target.value)});
   document.querySelector('#clear-filters')?.addEventListener('click',()=>store.clearFilters());
   document.querySelectorAll('[data-remove-filter]').forEach(b=>b.addEventListener('click',()=>store.removeFilter(b.dataset.removeFilter)));
@@ -317,7 +448,28 @@ function bindEvents(){
   document.querySelectorAll('[data-restore-branch]').forEach(el=>el.addEventListener('click',()=>store.restoreBranch(el.dataset.restoreBranch)));
   document.querySelectorAll('[data-dim]').forEach(sel=>sel.addEventListener('change',()=>store.setDimension(sel.dataset.dim,sel.value)));
   document.querySelectorAll('[data-row-id]').forEach(row=>row.addEventListener('click',ev=>{store.state.focusedRecordId=row.dataset.rowId;store.toggleSelection(row.dataset.rowId,ev.ctrlKey||ev.metaKey||ev.shiftKey);}));
-  document.querySelectorAll('.point[data-record-id]').forEach(pt=>pt.addEventListener('click',ev=>{ev.stopPropagation();store.state.focusedRecordId=pt.dataset.recordId;store.toggleSelection(pt.dataset.recordId,ev.ctrlKey||ev.metaKey||ev.shiftKey);}));
+  document.querySelectorAll('.point[data-record-id]').forEach(pt=>{
+    pt.addEventListener('pointerdown',()=>{pointPointerScroll=captureViewportScroll();});
+    pt.addEventListener('click',ev=>{
+      ev.stopPropagation();
+      ev.preventDefault();
+      const scroll=pointPointerScroll || captureViewportScroll();
+      pointPointerScroll=null;
+      store.state.focusedRecordId=pt.dataset.recordId;
+      store.toggleSelection(pt.dataset.recordId,ev.ctrlKey||ev.metaKey||ev.shiftKey);
+      scheduleViewportRestore(scroll);
+    });
+    pt.addEventListener('keydown',ev=>{
+      if (ev.key === 'Enter' || ev.key === ' ') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const scroll=captureViewportScroll();
+        store.state.focusedRecordId=pt.dataset.recordId;
+        store.toggleSelection(pt.dataset.recordId,ev.ctrlKey||ev.metaKey||ev.shiftKey);
+        scheduleViewportRestore(scroll);
+      }
+    });
+  });
   bindScatterBrush();
   document.querySelectorAll('[data-node-id]').forEach(n=>n.addEventListener('click',()=>store.mutate(s=>{s.focusedGraphNodeId=n.dataset.nodeId;},{activity:{kind:'graph',text:`Focused graph node ${n.dataset.nodeId}`}})));
   document.querySelectorAll('[data-fork-hypothesis]').forEach(b=>b.addEventListener('click',()=>{const parent=store.state.hypotheses.find(h=>h.id===b.dataset.forkHypothesis);const title=prompt('Alternative hypothesis',parent?`${parent.title} — alternative`:'Alternative hypothesis');if(title)store.forkHypothesis(b.dataset.forkHypothesis,{title,forkReason:'Human-created alternative'});}));
@@ -328,25 +480,29 @@ function bindEvents(){
   document.querySelectorAll('[data-attach-evidence]').forEach(b=>b.addEventListener('click',()=>showModal('attach',{hypothesisId:b.dataset.attachEvidence})));
   document.querySelectorAll('[data-focus-doc]').forEach(b=>b.addEventListener('click',()=>store.mutate(s=>{s.focusedDocumentId=b.dataset.focusDoc;s.activeTab='evidence';},{history:false})));
   document.querySelectorAll('[data-doc-id]').forEach(d=>d.addEventListener('click',()=>store.mutate(s=>{s.focusedDocumentId=d.dataset.docId;},{history:false})));
-  document.querySelector('#evidence-search')?.addEventListener('input',ev=>{const q=ev.target.value.toLowerCase();document.querySelectorAll('[data-doc-search]').forEach(card=>card.classList.toggle('hidden',!card.dataset.docSearch.includes(q)));});
+  document.querySelector('#evidence-search')?.addEventListener('input',ev=>{evidenceSearch=ev.target.value;const q=evidenceSearch.toLowerCase();document.querySelectorAll('[data-doc-search]').forEach(card=>card.classList.toggle('hidden',!card.dataset.docSearch.includes(q)));});
   document.querySelector('#add-annotation')?.addEventListener('click',()=>showModal('annotation'));
   document.querySelector('#show-tools')?.addEventListener('click',()=>showModal('tools'));
   document.querySelectorAll('[data-copy-prompt]').forEach(b=>b.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(b.dataset.copyPrompt);toast('Prompt copied — use it with the browser agent')}catch{toast(b.dataset.copyPrompt)}}));
   document.querySelector('#import-btn')?.addEventListener('click',()=>fileInput.click());
+  document.querySelector('#api-btn')?.addEventListener('click',()=>showModal('api'));
   document.querySelector('#export-btn')?.addEventListener('click',()=>download(`investigation-${store.state.dataset.id}.json`,JSON.stringify(store.exportState(),null,2)));
+  document.querySelectorAll('[data-restore-view],[data-restore-branch],[data-row-id],[data-node-id],[data-doc-id]').forEach((element)=>element.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();element.click();}}));
 }
 
 function bindScatterBrush(){
   const svg=document.querySelector('#scatter-svg'); if(!svg)return;
   const brush=svg.querySelector('#scatter-brush'); let start=null,moved=false;
   const coords=(ev)=>{const rect=svg.getBoundingClientRect();const vb=svg.viewBox.baseVal;return {x:(ev.clientX-rect.left)/rect.width*vb.width,y:(ev.clientY-rect.top)/rect.height*vb.height};};
-  svg.addEventListener('pointerdown',ev=>{if(ev.target.classList.contains('point'))return;start=coords(ev);moved=false;svg.setPointerCapture(ev.pointerId);brush.setAttribute('visibility','visible');brush.setAttribute('x',start.x);brush.setAttribute('y',start.y);brush.setAttribute('width',0);brush.setAttribute('height',0);});
+  const cancelBrush=()=>{if(!start)return;start=null;moved=false;brush.setAttribute('visibility','hidden');window.removeEventListener('keydown',keydown);};
+  const keydown=(e)=>{if(e.key==='Escape'&&start){e.preventDefault();cancelBrush();}};
+  svg.addEventListener('pointerdown',ev=>{if(ev.target.classList.contains('point'))return;start=coords(ev);moved=false;svg.setPointerCapture(ev.pointerId);brush.setAttribute('visibility','visible');brush.setAttribute('x',start.x);brush.setAttribute('y',start.y);brush.setAttribute('width',0);brush.setAttribute('height',0);window.addEventListener('keydown',keydown);});
   svg.addEventListener('pointermove',ev=>{if(!start)return;const p=coords(ev);moved=true;brush.setAttribute('x',Math.min(start.x,p.x));brush.setAttribute('y',Math.min(start.y,p.y));brush.setAttribute('width',Math.abs(p.x-start.x));brush.setAttribute('height',Math.abs(p.y-start.y));});
-  const finish=(ev)=>{if(!start)return;const p=coords(ev);brush.setAttribute('visibility','hidden');if(moved){const x1=Math.min(start.x,p.x),x2=Math.max(start.x,p.x),y1=Math.min(start.y,p.y),y2=Math.max(start.y,p.y);const ids=[...svg.querySelectorAll('.point[data-record-id]')].filter(pt=>{const x=Number(pt.dataset.cx),y=Number(pt.dataset.cy);return x>=x1&&x<=x2&&y>=y1&&y<=y2;}).map(pt=>pt.dataset.recordId);store.setSelection(ids);}start=null;};
-  svg.addEventListener('pointerup',finish);svg.addEventListener('pointercancel',()=>{start=null;brush.setAttribute('visibility','hidden');});
+  const finish=(ev)=>{if(!start)return;const p=coords(ev);brush.setAttribute('visibility','hidden');if(moved){const x1=Math.min(start.x,p.x),x2=Math.max(start.x,p.x),y1=Math.min(start.y,p.y),y2=Math.max(start.y,p.y);const ids=[...svg.querySelectorAll('.point[data-record-id]')].filter(pt=>{const x=Number(pt.dataset.cx),y=Number(pt.dataset.cy);return x>=x1&&x<=x2&&y>=y1&&y<=y2;}).map(pt=>pt.dataset.recordId);store.setSelection(ids);}start=null;window.removeEventListener('keydown',keydown);};
+  svg.addEventListener('pointerup',finish);svg.addEventListener('pointercancel',cancelBrush);
 }
 
-fileInput.addEventListener('change',async()=>{const file=fileInput.files?.[0];if(!file)return;try{const text=await file.text();if(file.name.toLowerCase().endsWith('.json')){const data=JSON.parse(text);if(data.format==='investigation-canvas/v1')store.importState(data);else{const records=Array.isArray(data)?data:data.records;if(!Array.isArray(records))throw new Error('JSON must be an array of records or an Investigation Canvas export');store.loadCustomDataset(inferDataset(records,file.name.replace(/\.json$/i,'')));}}else{const records=parseCsv(text);if(!records.length)throw new Error('No CSV rows found');store.loadCustomDataset(inferDataset(records,file.name.replace(/\.csv$/i,'')));}toast(`Imported ${file.name}`);}catch(error){toast(`Import failed: ${error.message}`)}finally{fileInput.value='';}});
+fileInput.addEventListener('change',async()=>{const file=fileInput.files?.[0];if(!file)return;try{toast(`Reading ${file.name}…`);const result=await loadFileSource(file);if(result.type==='workspace')store.importState(result.payload);else store.loadCustomDataset(result.dataset);toast(`Imported ${file.name}`);}catch(error){toast(`Import failed: ${error.message}`)}finally{fileInput.value='';}});
 
 document.addEventListener('keydown',ev=>{if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==='z'){ev.preventDefault();ev.shiftKey?store.redo():store.undo();}if(ev.key==='Escape')closeModal();});
 
@@ -354,3 +510,10 @@ store.subscribe(render);
 render();
 registerWebMcp(store);
 window.InvestigationCanvas={store,createWebMcpTools:()=>createWebMcpTools(store)};
+
+if (typeof window !== 'undefined' && window.location) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('demo') === '1') {
+    import('./demo.js').then(({ initDemo }) => initDemo(store));
+  }
+}

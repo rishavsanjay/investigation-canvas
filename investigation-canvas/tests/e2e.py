@@ -1,6 +1,12 @@
+import os
+from pathlib import Path
+
 from playwright.sync_api import sync_playwright
 
-URL='http://127.0.0.1:4173/'
+URL=os.environ.get('E2E_URL','http://127.0.0.1:4173/')
+CHROMIUM_PATH=os.environ.get('CHROMIUM_PATH')
+ARTIFACTS_DIR=Path(os.environ.get('ARTIFACTS_DIR',Path(__file__).resolve().parents[1]/'assets'))
+ARTIFACTS_DIR.mkdir(parents=True,exist_ok=True)
 errors=[]
 
 LAYOUT_AUDIT = r'''() => {
@@ -63,7 +69,12 @@ def assert_layout(page, label):
 
 
 with sync_playwright() as p:
-    browser=p.chromium.launch(headless=True, executable_path='/usr/bin/chromium', args=['--no-sandbox','--allow-file-access-from-files'])
+    launch_options={'headless':True,'args':['--no-sandbox','--allow-file-access-from-files']}
+    if CHROMIUM_PATH:
+        launch_options['executable_path']=CHROMIUM_PATH
+    elif Path('/usr/bin/chromium').exists():
+        launch_options['executable_path']='/usr/bin/chromium'
+    browser=p.chromium.launch(**launch_options)
     page=browser.new_page(viewport={'width':1440,'height':1000}, device_scale_factor=1)
     page.add_init_script("""
       window.__registeredTools = [];
@@ -74,6 +85,7 @@ with sync_playwright() as p:
     """)
     page.on('console', lambda msg: errors.append(f'console {msg.type}: {msg.text}') if msg.type=='error' else None)
     page.on('pageerror', lambda exc: errors.append(f'pageerror: {exc}'))
+    page.on('dialog', lambda dialog: dialog.accept())
     page.goto(URL, wait_until='networkidle')
     assert page.locator('.brand-title').inner_text() == 'Investigation Canvas'
     tools=page.evaluate('window.__registeredTools.length')
@@ -81,7 +93,54 @@ with sync_playwright() as p:
     assert page.locator('.point[data-record-id]').count() > 100
     assert_layout(page, 'desktop explore')
 
+    # A real plotted-point click must not move or resize the chart viewport.
+    before_point_click = page.evaluate("""() => ({
+      content:document.querySelector('.content').getBoundingClientRect().toJSON(),
+      scatter:document.querySelector('#scatter-svg').getBoundingClientRect().toJSON()
+    })""")
+    point_box = page.locator('#scatter-svg .point[data-record-id]').first.bounding_box()
+    assert point_box
+    page.mouse.click(point_box['x'] + point_box['width'] / 2, point_box['y'] + point_box['height'] / 2)
+    after_point_click = page.evaluate("""() => ({
+      content:document.querySelector('.content').getBoundingClientRect().toJSON(),
+      scatter:document.querySelector('#scatter-svg').getBoundingClientRect().toJSON()
+    })""")
+    for region in ['content', 'scatter']:
+        for field in ['x', 'y', 'width', 'height']:
+            assert abs(after_point_click[region][field]-before_point_click[region][field]) < 1, (region, field, before_point_click, after_point_click)
+
+    # Rerendering after another point selection must also preserve manual scroll.
+    point_click_view = page.evaluate("""() => {
+      const content=document.querySelector('.content');
+      content.scrollTop=Math.min(240,content.scrollHeight-content.clientHeight);
+      const before={top:content.scrollTop,x:window.InvestigationCanvas.store.state.xDim,y:window.InvestigationCanvas.store.state.yDim};
+      document.querySelector('.point[data-record-id]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+      const next=document.querySelector('.content');
+      return {before,after:{top:next.scrollTop,x:window.InvestigationCanvas.store.state.xDim,y:window.InvestigationCanvas.store.state.yDim}};
+    }""")
+    assert point_click_view['before']['top'] > 0
+    assert abs(point_click_view['after']['top']-point_click_view['before']['top']) < 2
+    assert point_click_view['after']['x'] == point_click_view['before']['x']
+    assert point_click_view['after']['y'] == point_click_view['before']['y']
+
+    # Concurrent agent updates must not destroy a human's in-progress modal draft.
+    page.locator('[data-tab="hypotheses"]').click()
+    page.locator('#add-hypothesis').click()
+    page.locator('#hyp-title').fill('Human draft in progress')
+    page.evaluate("window.InvestigationCanvas.store.setSelection([window.InvestigationCanvas.store.state.dataset.records[0].id], 'agent')")
+    assert page.locator('#hyp-title').input_value() == 'Human draft in progress'
+    page.keyboard.press('Escape')
+
+    # Full rerenders preserve keyboard focus and cursor position.
+    page.locator('#global-search').focus()
+    page.locator('#global-search').fill('Safari')
+    page.keyboard.press('Enter')
+    assert page.evaluate("document.activeElement?.id") == 'global-search'
+    page.locator('#global-search').fill('')
+    page.keyboard.press('Enter')
+
     # Human-linked selection
+    page.locator('[data-tab="explore"]').click()
     first=page.locator('[data-row-id]').first
     first.click()
     assert page.locator('.selection-banner').count()==1
@@ -113,6 +172,34 @@ with sync_playwright() as p:
       page.wait_for_timeout(80)
       assert_layout(page, f'desktop {tab}')
 
+    # Evidence search remains active while documents are opened.
+    page.locator('[data-tab="evidence"]').click()
+    page.locator('#evidence-search').fill('release')
+    visible_before=page.locator('[data-doc-id]:not(.hidden)').count()
+    if visible_before:
+        page.locator('[data-doc-id]:not(.hidden)').first.click()
+        assert page.locator('#evidence-search').input_value() == 'release'
+        assert page.locator('[data-doc-id]:not(.hidden)').count() == visible_before
+
+    # Dragging the stage background updates the canvas viewport.
+    page.locator('[data-tab="canvas"]').click()
+    page.evaluate("""() => {
+      const stage=document.querySelector('.canvas-stage');
+      stage.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:400,clientY:700,pointerId:1}));
+      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:460,clientY:740,pointerId:1}));
+      window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:460,clientY:740,pointerId:1}));
+    }""")
+    assert page.evaluate('window.InvestigationCanvas.store.state.canvas.panX') == 60
+    cancel_result=page.evaluate("""() => {
+      const stage=document.querySelector('.canvas-stage');
+      const before=stage.style.transform;
+      stage.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:400,clientY:700,pointerId:2}));
+      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:520,clientY:760,pointerId:2}));
+      window.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,clientX:520,clientY:760,pointerId:2}));
+      return {before,after:stage.style.transform,panX:window.InvestigationCanvas.store.state.canvas.panX};
+    }""")
+    assert cancel_result['after']==cancel_result['before'] and cancel_result['panX']==60
+
     # Dataset switch and chart rerender
     page.locator('[data-tab="explore"]').click()
     page.locator('#dataset-switcher').select_option('model-regression')
@@ -125,7 +212,7 @@ with sync_playwright() as p:
     assert 'Suspicious transaction network' in page.locator('.dataset-title').inner_text()
     assert_layout(page, 'desktop fraud ring')
 
-    page.screenshot(path='/mnt/data/investigation-canvas/assets/e2e-desktop.png', full_page=True)
+    page.screenshot(path=str(ARTIFACTS_DIR/'e2e-desktop.png'), full_page=True)
 
     # Responsive regression test: exact defects previously found by the visual audit.
     mobile=browser.new_page(viewport={'width':390,'height':844})
@@ -149,8 +236,30 @@ with sync_playwright() as p:
         mobile.wait_for_timeout(80)
         assert_layout(mobile, 'mobile evidence map')
 
-    mobile.screenshot(path='/mnt/data/investigation-canvas/assets/e2e-mobile.png', full_page=True)
+    mobile.screenshot(path=str(ARTIFACTS_DIR/'e2e-mobile.png'), full_page=True)
     mobile.close()
+
+    # Tablet/small-laptop header actions must not intercept the Provenance tab.
+    tablet=browser.new_page(viewport={'width':1024,'height':768})
+    tablet.goto(URL,wait_until='networkidle')
+    tablet.locator('[data-tab="provenance"]').click()
+    assert tablet.locator('[data-tab="provenance"]').get_attribute('class').find('active') >= 0
+    tablet.close()
+
+    # Imported coordinate strings are normalized and cannot create executable DOM.
+    security=browser.new_page(viewport={'width':900,'height':700})
+    security.goto(URL,wait_until='networkidle')
+    result=security.evaluate("""() => {
+      window.__auditXss=0;
+      const payload=window.InvestigationCanvas.store.exportState();
+      payload.workspace.activeTab='canvas';
+      payload.workspace.canvas.views[0].x='0\"/><image id="audit-xss" href="x" onerror="window.__auditXss=1"/><line x1="0';
+      window.InvestigationCanvas.store.importState(payload);
+      return {x:window.InvestigationCanvas.store.state.canvas.views[0].x,injected:document.querySelectorAll('#audit-xss').length,executed:window.__auditXss};
+    }""")
+    assert isinstance(result['x'],(int,float))
+    assert result['injected']==0 and result['executed']==0
+    security.close()
     browser.close()
 
 if errors:

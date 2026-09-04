@@ -11,7 +11,7 @@ const round = (value, digits = 2) => Number(value.toFixed(digits));
 
 function buildCheckoutRegression() {
   const rng = mulberry32(20260903);
-  const start = Date.parse('2026-08-24T00:00:00Z');
+  const start = Date.parse('2026-08-01T00:00:00Z');
   const hour = 60 * 60 * 1000;
   const browsers = ['Chrome 149', 'Safari 20.1', 'Safari 20.2', 'Firefox 142', 'Edge 149'];
   const regions = ['NA', 'EU', 'APAC', 'LATAM'];
@@ -50,7 +50,6 @@ function buildCheckoutRegression() {
       checkoutAbandonment += 9 + jitter(rng, 2);
     }
 
-    const severity = safariBug ? 'critical' : experimentBug ? 'warning' : errorRate > 1.15 ? 'warning' : 'normal';
     records.push({
       id: `req-${String(i + 1).padStart(4, '0')}`,
       timestamp,
@@ -64,20 +63,19 @@ function buildCheckoutRegression() {
       errorRate: round(Math.max(0.05, errorRate)),
       checkoutAbandonment: round(Math.min(80, checkoutAbandonment)),
       sessions: Math.round(8200 + jitter(rng, 2200)),
-      service: safariBug ? 'checkout-ui' : experimentBug ? 'pricing-api' : pick(rng, ['checkout-ui', 'pricing-api', 'payment-api']),
-      severity,
-      note: safariBug
-        ? 'Repeated client-side submit retries detected.'
-        : experimentBug
-          ? 'Variant pricing response increased hesitation at checkout.'
-          : 'No notable anomaly.'
+      service: pick(rng, ['checkout-ui', 'pricing-api', 'payment-api'])
     });
   }
 
   return {
     id: 'checkout-regression',
     title: 'Checkout conversion regression',
-    subtitle: 'Production telemetry, release metadata, experiment cohorts, support evidence',
+    subtitle: 'Deterministic incident simulation with telemetry, releases, experiments, and evidence',
+    provenance: {
+      kind: 'synthetic',
+      label: 'Deterministic synthetic demo',
+      description: 'Generated locally for a reproducible WebMCP investigation. It represents no real company or customers.'
+    },
     recordLabel: 'hourly cohort slice',
     dimensions: {
       time: 'timestamp',
@@ -86,7 +84,7 @@ function buildCheckoutRegression() {
       color: 'platform',
       size: 'sessions'
     },
-    keyFields: ['platform', 'browser', 'region', 'cohort', 'version', 'service', 'severity'],
+    keyFields: ['platform', 'browser', 'region', 'cohort', 'version', 'service'],
     numericFields: ['conversion', 'latency', 'errorRate', 'checkoutAbandonment', 'sessions'],
     records,
     documents: [
@@ -95,7 +93,7 @@ function buildCheckoutRegression() {
         title: 'Release web-4.7.2 notes',
         type: 'release-note',
         source: 'Engineering release bot',
-        timestamp: '2026-09-09T01:05:00Z',
+        timestamp: '2026-08-17T01:05:00Z',
         trust: 'internal',
         tags: ['release', 'checkout-ui', 'Safari'],
         text: 'web-4.7.2 deployed a redesigned mobile checkout submit state. The change introduced optimistic form locking and a retry fallback for browsers that miss the first completion event. Browser-specific validation was limited to Safari 20.1 during pre-release testing.'
@@ -105,7 +103,7 @@ function buildCheckoutRegression() {
         title: 'Support cluster: mobile checkout loops',
         type: 'support-summary',
         source: 'Customer support',
-        timestamp: '2026-09-10T08:40:00Z',
+        timestamp: '2026-08-18T08:40:00Z',
         trust: 'untrusted',
         tags: ['support', 'mobile', 'Safari 20.2'],
         text: 'Multiple customers report that tapping Pay briefly disables the button, then restores it without completing checkout. Most reports mention recent iPhone updates. One user says the flow eventually works after three or four attempts.'
@@ -115,17 +113,17 @@ function buildCheckoutRegression() {
         title: 'Pricing experiment B specification',
         type: 'experiment',
         source: 'Growth team',
-        timestamp: '2026-09-10T12:00:00Z',
+        timestamp: '2026-08-18T12:00:00Z',
         trust: 'internal',
         tags: ['experiment', 'price-test-B', 'desktop'],
-        text: 'Variant B shows the annualized price prominently before the monthly equivalent. It targets desktop traffic only and began ramping from 10% to 50% on September 10. Primary metric is checkout conversion; guardrail is support contact rate.'
+        text: 'Variant B shows the annualized price prominently before the monthly equivalent. It targets desktop traffic only and began ramping from 10% to 50% on August 18. Primary metric is checkout conversion; guardrail is support contact rate.'
       },
       {
         id: 'doc-incident-payment',
         title: 'Payment API health check',
         type: 'incident-note',
         source: 'SRE',
-        timestamp: '2026-09-10T14:10:00Z',
+        timestamp: '2026-08-18T14:10:00Z',
         trust: 'internal',
         tags: ['payment-api', 'latency'],
         text: 'Payment API p95 and authorization success rate remained within weekly baseline throughout the conversion drop. No deploys or dependency incidents occurred during the affected window.'
@@ -135,7 +133,7 @@ function buildCheckoutRegression() {
         title: 'Safari 20.2 adoption snapshot',
         type: 'external-note',
         source: 'Browser analytics feed',
-        timestamp: '2026-09-09T18:00:00Z',
+        timestamp: '2026-08-17T18:00:00Z',
         trust: 'untrusted',
         tags: ['Safari 20.2', 'browser'],
         text: 'Safari 20.2 adoption increased rapidly after the public update, crossing 38% of mobile Safari traffic within 36 hours.'
@@ -158,34 +156,34 @@ function buildCheckoutRegression() {
         { source: 'n-web472', target: 'n-checkout', label: 'deployed to' },
         { source: 'n-checkout', target: 'n-mobile', label: 'serves' },
         { source: 'n-safari', target: 'n-mobile', label: 'runs on' },
-        { source: 'n-safari', target: 'n-errors', label: 'correlates with' },
-        { source: 'n-errors', target: 'n-conv', label: 'precedes' },
+        { source: 'n-safari', target: 'n-errors', label: 'telemetry dimension' },
+        { source: 'n-errors', target: 'n-conv', label: 'monitored alongside' },
         { source: 'n-priceb', target: 'n-desktop', label: 'targets' },
         { source: 'n-priceb', target: 'n-pricing', label: 'changes response' },
-        { source: 'n-pricing', target: 'n-conv', label: 'secondary effect' },
-        { source: 'n-payment', target: 'n-conv', label: 'ruled out' }
+        { source: 'n-pricing', target: 'n-conv', label: 'feeds checkout' },
+        { source: 'n-payment', target: 'n-conv', label: 'feeds checkout' }
       ]
     },
     starterHypotheses: [
       {
-        id: 'hyp-browser',
-        title: 'Safari 20.2 + web-4.7.2 caused the primary regression',
-        confidence: 72,
+        id: 'hyp-client',
+        title: 'A client-side compatibility regression reduced checkout completion',
+        confidence: 35,
         status: 'testing',
-        supporting: ['doc-release-472', 'doc-support-safari', 'doc-browser-rollout'],
+        supporting: [],
         contradicting: [],
-        questions: ['Does the regression persist on Safari 20.1?', 'Did the failure begin exactly at the web-4.7.2 boundary?'],
-        notes: 'Strong temporal and segment correlation; needs direct comparison against other mobile browsers.'
+        questions: ['Which browser and version segments changed?', 'Does the timing align with a client release?'],
+        notes: 'Unverified starting hypothesis. Compare affected and unaffected client cohorts before updating confidence.'
       },
       {
         id: 'hyp-payment',
-        title: 'Payment API degradation caused checkout failures',
-        confidence: 18,
-        status: 'weakened',
+        title: 'A checkout backend dependency reduced completion',
+        confidence: 35,
+        status: 'testing',
         supporting: [],
-        contradicting: ['doc-incident-payment'],
-        questions: ['Any region-specific dependency issue hidden by aggregate health?'],
-        notes: 'Aggregate payment telemetry is normal.'
+        contradicting: [],
+        questions: ['Do backend health changes align with the affected window?', 'Is the effect consistent across clients and regions?'],
+        notes: 'Unverified starting hypothesis. Inspect service health and segment consistency before updating confidence.'
       }
     ]
   };
@@ -350,9 +348,9 @@ function buildFraudRing() {
 function richEvidenceFor(datasetId) {
   const common = (id, title, type, source, timestamp, trust, tags, text, mediaType, media) => ({ id, title, type, source, timestamp, trust, tags, text, mediaType, media });
   if (datasetId === 'checkout-regression') return [
-    common('media-checkout-capture', 'Checkout retry capture', 'screen-capture', 'QA reproduction', '2026-09-10T09:12:00Z', 'internal', ['Safari 20.2','checkout-ui'], 'Annotated capture of the mobile checkout state after the completion event is missed.', 'image', { caption: 'Safari 20.2 reproduction — Pay button returns to idle after retry', width: 640, height: 360, boxes: [{ x: 0.57, y: 0.67, w: 0.26, h: 0.14, label: 'retry state' }, { x: 0.12, y: 0.18, w: 0.38, h: 0.11, label: 'web-4.7.2' }] }),
-    common('media-checkout-map', 'Affected session geography', 'geo-snapshot', 'Telemetry', '2026-09-10T10:00:00Z', 'internal', ['mobile','sessions'], 'Representative affected session clusters; issue is cross-region rather than localized.', 'map', { points: [{ lat: 37.77, lon: -122.42, label: 'NA', value: 82 }, { lat: 51.51, lon: -0.13, label: 'EU', value: 74 }, { lat: 1.35, lon: 103.82, label: 'APAC', value: 91 }, { lat: -23.55, lon: -46.63, label: 'LATAM', value: 63 }] }),
-    common('media-checkout-log', 'Checkout retry log stream', 'log-stream', 'Frontend telemetry', '2026-09-10T09:15:00Z', 'untrusted', ['Safari 20.2','retry'], 'Raw client telemetry excerpts around the failed completion event.', 'log', { lines: ['09:14:31.044 submit:start browser=Safari20.2','09:14:31.281 completion:event_missed attempt=1','09:14:31.812 retry:fallback attempt=2','09:14:32.103 ui:unlock reason=timeout','09:14:35.440 submit:start attempt=3'] })
+    common('media-checkout-capture', 'Checkout retry capture', 'screen-capture', 'QA reproduction', '2026-08-18T09:12:00Z', 'internal', ['Safari 20.2','checkout-ui'], 'Annotated capture of the mobile checkout state after the completion event is missed.', 'image', { caption: 'Safari 20.2 reproduction — Pay button returns to idle after retry', width: 640, height: 360, boxes: [{ x: 0.57, y: 0.67, w: 0.26, h: 0.14, label: 'retry state' }, { x: 0.12, y: 0.18, w: 0.38, h: 0.11, label: 'web-4.7.2' }] }),
+    common('media-checkout-map', 'Affected session geography', 'geo-snapshot', 'Telemetry', '2026-08-18T10:00:00Z', 'internal', ['mobile','sessions'], 'Representative affected session clusters; issue is cross-region rather than localized.', 'map', { points: [{ lat: 37.77, lon: -122.42, label: 'NA', value: 82 }, { lat: 51.51, lon: -0.13, label: 'EU', value: 74 }, { lat: 1.35, lon: 103.82, label: 'APAC', value: 91 }, { lat: -23.55, lon: -46.63, label: 'LATAM', value: 63 }] }),
+    common('media-checkout-log', 'Checkout retry log stream', 'log-stream', 'Frontend telemetry', '2026-08-18T09:15:00Z', 'untrusted', ['Safari 20.2','retry'], 'Raw client telemetry excerpts around the failed completion event.', 'log', { lines: ['09:14:31.044 submit:start browser=Safari20.2','09:14:31.281 completion:event_missed attempt=1','09:14:31.812 retry:fallback attempt=2','09:14:32.103 ui:unlock reason=timeout','09:14:35.440 submit:start attempt=3'] })
   ];
   if (datasetId === 'model-regression') return [
     common('media-model-capture', 'Failure gallery sample', 'image-review', 'Model quality team', '2026-08-31T16:10:00Z', 'internal', ['dataset-v7','crop'], 'Representative image showing object truncation under center-0.80.', 'image', { caption: 'Failure sample — object clipped by aggressive crop', width: 640, height: 420, boxes: [{ x: 0.05, y: 0.08, w: 0.74, h: 0.82, label: 'expected object' }, { x: 0.18, y: 0.15, w: 0.54, h: 0.67, label: 'visible crop' }] }),
@@ -369,16 +367,21 @@ function richEvidenceFor(datasetId) {
 function enrichDataset(dataset) {
   const media = richEvidenceFor(dataset.id);
   const starterFindings = dataset.id === 'checkout-regression'
-    ? [{ id: 'finding-release', title: 'Primary release boundary', text: 'The largest conversion break aligns with web-4.7.2 on Safari 20.2 mobile traffic.', confidence: 84, evidenceIds: ['doc-release-472','doc-support-safari'] }]
+    ? []
     : dataset.id === 'model-regression'
       ? [{ id: 'finding-crop', title: 'Crop-driven quality loss', text: 'center-0.80 accounts for the dominant dataset-v7 quality regression.', confidence: 81, evidenceIds: ['doc-dsv7','doc-label-review'] }]
       : [{ id: 'finding-device', title: 'Shared device control signal', text: 'dev-A12 and dev-B77 share rare fingerprint and hosting features across linked merchants.', confidence: 74, evidenceIds: ['doc-device','doc-merchant'] }];
   const starterCausalLinks = dataset.id === 'checkout-regression'
-    ? [{ id: 'cause-release-errors', source: 'n-web472', target: 'n-errors', label: 'introduced retry failure', confidence: 78 }, { id: 'cause-errors-conv', source: 'n-errors', target: 'n-conv', label: 'drives abandonment', confidence: 82 }]
+    ? []
     : dataset.id === 'model-regression'
       ? [{ id: 'cause-crop-trunc', source: 'n-crop80', target: 'n-trunc', label: 'clips objects', confidence: 88 }, { id: 'cause-trunc-acc', source: 'n-trunc', target: 'n-acc', label: 'reduces accuracy', confidence: 86 }]
       : [{ id: 'cause-host-ring', source: 'n-host', target: 'n-risk', label: 'connects device cluster', confidence: 69 }];
-  return { ...dataset, documents: [...dataset.documents, ...media], starterFindings, starterCausalLinks };
+  const provenance = dataset.provenance || {
+    kind: 'synthetic',
+    label: 'Deterministic synthetic demo',
+    description: 'Generated locally for a reproducible WebMCP investigation. It represents no real organization or people.'
+  };
+  return { ...dataset, provenance, documents: [...dataset.documents, ...media], starterFindings, starterCausalLinks };
 }
 
 const BASE_DATASETS = [buildCheckoutRegression(), buildModelRegression(), buildFraudRing()];

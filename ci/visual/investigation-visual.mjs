@@ -55,6 +55,14 @@ async function maybeClickText(page, text) {
   return false;
 }
 
+async function clickTab(page, id) {
+  const tab = page.locator(`[data-tab="${id}"]`);
+  if (!(await tab.count())) return false;
+  await tab.click();
+  await page.waitForTimeout(250);
+  return true;
+}
+
 async function captureWorkspaceState(page, label) {
   const state = await page.evaluate((label) => ({
     label,
@@ -96,6 +104,7 @@ async function runDesktop() {
   });
 
   const page = await context.newPage();
+  page.on('dialog', dialog => dialog.accept());
   page.on('console', msg => { if (msg.type() === 'error') diagnostics.consoleErrors.push(msg.text()); });
   page.on('pageerror', err => diagnostics.pageErrors.push(err.message));
   page.on('requestfailed', req => diagnostics.requestsFailed.push({ url: req.url(), failure: req.failure()?.errorText }));
@@ -134,26 +143,25 @@ async function runDesktop() {
   }
 
   // Capture the major investigation modes.
-  if (await maybeClickText(page, 'Hypotheses')) {
+  if (await clickTab(page, 'hypotheses')) {
     await captureWorkspaceState(page, 'hypotheses');
     await screenshot(page, '02-hypotheses');
   }
-  if (await maybeClickText(page, 'Evidence')) {
+  if (await clickTab(page, 'evidence')) {
     await captureWorkspaceState(page, 'evidence');
     await screenshot(page, '03-evidence');
   }
-  if (await maybeClickText(page, 'Provenance')) {
+  if (await clickTab(page, 'provenance')) {
     await captureWorkspaceState(page, 'provenance');
     await screenshot(page, '04-provenance');
   }
 
   // New spatial/freeform workbench is optional in older snapshots but mandatory once present.
-  for (const label of ['Canvas', 'Workspace', 'Investigation canvas']) {
-    if (await maybeClickText(page, label)) {
-      await captureWorkspaceState(page, 'spatial-canvas');
-      await screenshot(page, '05-spatial-canvas');
-      break;
-    }
+  if (await clickTab(page, 'canvas')) {
+    recordCheck('spatial canvas view is active', await page.locator('[data-tab="canvas"].active').count() === 1);
+    recordCheck('spatial canvas rendered', await page.locator('.canvas-viewport').count() === 1);
+    await captureWorkspaceState(page, 'spatial-canvas');
+    await screenshot(page, '05-spatial-canvas');
   }
 
   // Scenario switching: select the suspicious-network scenario if exposed by a select.
@@ -165,9 +173,10 @@ async function runDesktop() {
     if (target) {
       await s.selectOption({ label: target });
       await page.waitForTimeout(400);
+      const scenarioTitle = await page.locator('.dataset-title').innerText();
+      recordCheck('scenario switched to suspicious transaction network', /Suspicious transaction network/i.test(scenarioTitle), scenarioTitle);
       await captureWorkspaceState(page, 'scenario-suspicious-network');
       await screenshot(page, '06-suspicious-transaction-network');
-      break;
     }
   }
 
@@ -178,6 +187,7 @@ async function runDesktop() {
 async function runMobile() {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
+  page.on('dialog', dialog => dialog.accept());
   page.on('console', msg => { if (msg.type() === 'error') diagnostics.consoleErrors.push(`mobile: ${msg.text()}`); });
   page.on('pageerror', err => diagnostics.pageErrors.push(`mobile: ${err.message}`));
   await page.goto(baseURL, { waitUntil: 'networkidle', timeout: 30000 });

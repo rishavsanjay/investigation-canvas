@@ -12,11 +12,13 @@ EXPECTED_TOOLS = 48
 def main():
     console_errors = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            executable_path=os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium"),
-            args=["--no-sandbox"],
-        )
+        launch_options = {"headless": True, "args": ["--no-sandbox"]}
+        chromium_path = os.environ.get("CHROMIUM_PATH")
+        if chromium_path:
+            launch_options["executable_path"] = chromium_path
+        elif Path("/usr/bin/chromium").exists():
+            launch_options["executable_path"] = "/usr/bin/chromium"
+        browser = p.chromium.launch(**launch_options)
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         page.add_init_script(
             """
@@ -34,6 +36,7 @@ def main():
             else None,
         )
         page.on("pageerror", lambda exc: console_errors.append(f"pageerror: {exc}"))
+        page.on("dialog", lambda dialog: dialog.accept())
         page.goto(URL, wait_until="networkidle")
 
         registered = page.evaluate("window.__registeredTools.map(t => t.name)")
